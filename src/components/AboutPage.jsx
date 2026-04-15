@@ -13,7 +13,7 @@ export default function AboutPage({ onNavigateHome }) {
           >
             <BookOpen size={18} />
             <span className="font-mono text-sm font-bold tracking-wider">
-              Ansible<span className="text-white">101</span>
+              Ansible<sup className="text-[8px] align-super">®</sup><span className="text-white">101</span>
             </span>
           </button>
           <span className="rounded-full border border-slate-800 bg-slate-900 px-3 py-1 font-mono text-[11px] uppercase tracking-widest text-slate-400">
@@ -27,7 +27,7 @@ export default function AboutPage({ onNavigateHome }) {
           <div className="mb-3 flex items-center gap-3 text-cyan-400">
             <Scale size={18} />
             <h1 className="font-mono text-2xl font-bold tracking-tight text-white">
-              Independent Ansible Learning Tool
+              Independent Ansible® Learning Tool
             </h1>
           </div>
           <p className="text-sm leading-7 text-slate-300">
@@ -53,7 +53,7 @@ export default function AboutPage({ onNavigateHome }) {
           <InfoCard
             icon={Scale}
             title="Trademark Notice"
-            body="Ansible101 is not affiliated with, endorsed by, or sponsored by Red Hat, Inc. Ansible is a registered trademark of Red Hat, Inc."
+            body="Ansible101 is not affiliated with, endorsed by, or sponsored by Red Hat, Inc. Ansible® is a trademark of Red Hat, LLC, registered in the United States and other countries."
           />
         </section>
 

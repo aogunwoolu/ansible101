@@ -270,7 +270,7 @@ export default function App() {
             onClick={() => handleSetMode('landing')}
             className="text-cyan-400 font-mono font-bold tracking-wider text-sm hover:text-cyan-300 transition-colors"
           >
-            Ansible<span className="text-white">101</span>
+            Ansible<sup className="text-cyan-400 text-[8px] align-super">®</sup><span className="text-white">101</span>
           </button>
         </div>
 
@@ -402,7 +402,7 @@ export default function App() {
       {/* Disclaimer footer */}
       <footer className="shrink-0 border-t border-slate-800 px-4 py-1.5 text-center text-slate-600 text-[10px] font-mono">
         Ansible101 is an independent community tool &mdash; not affiliated with, endorsed by, or sponsored by Red&nbsp;Hat,&nbsp;Inc.
-        Ansible® is a registered trademark of Red&nbsp;Hat,&nbsp;Inc.
+        Ansible® is a trademark of Red&nbsp;Hat,&nbsp;LLC, registered in the United States and other countries.
       </footer>
     </div>
   )
@@ -471,7 +471,7 @@ function LandingScreen({ onPaste, onLoadSample, onOpenAbout }) {
         <div className="flex items-center gap-3">
           <BookOpen size={28} className="text-cyan-400" />
           <h1 className="text-3xl font-mono font-bold tracking-tight">
-            <span className="text-cyan-400">Ansible</span>
+            <span className="text-cyan-400">Ansible</span><sup className="text-cyan-400 text-base align-super">®</sup>
             <span className="text-white">101</span>
           </h1>
         </div>
@@ -532,8 +532,7 @@ function LandingScreen({ onPaste, onLoadSample, onOpenAbout }) {
 
       <p className="text-slate-600 text-[10px] font-mono text-center max-w-sm">
         Ansible101 is an independent community tool and is not affiliated with,
-        endorsed by, or sponsored by Red&nbsp;Hat,&nbsp;Inc. Ansible® is a registered
-        trademark of Red&nbsp;Hat,&nbsp;Inc.
+        endorsed by, or sponsored by Red&nbsp;Hat,&nbsp;Inc. Ansible® is a trademark of Red&nbsp;Hat,&nbsp;LLC, registered in the United States and other countries.
       </p>
 
       <button
