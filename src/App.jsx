@@ -7,8 +7,10 @@
  *   'snippet'   Editor | Quick-Card
  *   'jinja2'    Editor | Pipeline View
  */
+/* eslint-disable react/prop-types */
+/* eslint-disable jsx-a11y/no-static-element-interactions */
 import React, {
-  useState, useCallback, useEffect, useMemo,
+  useState, useCallback, useEffect, useMemo, useRef,
 } from 'react'
 import yaml from 'js-yaml'
 import { parsePlaybook } from './lib/parseYamlToFlow'
@@ -24,12 +26,54 @@ import HumanSidebar from './components/HumanSidebar'
 import MockContextPanel from './components/MockContextPanel'
 import QuickCard from './components/QuickCard'
 import PipelineView from './components/PipelineView'
+import AboutPage from './components/AboutPage'
 
 import {
   Share2, AlertCircle, RotateCcw, BookOpen,
   ClipboardPaste, Layers, Zap, FileCode,
   FlaskConical,
 } from 'lucide-react'
+
+const MODE_PATHS = {
+  landing: '/',
+  playbook: '/playbook',
+  snippet: '/snippet',
+  jinja2: '/jinja',
+  about: '/about',
+}
+
+function getModeFromPath(pathname) {
+  if (pathname === '/playbook') return 'playbook'
+  if (pathname === '/snippet') return 'snippet'
+  if (pathname === '/jinja') return 'jinja2'
+  if (pathname === '/about' || pathname === '/legal') return 'about'
+  return 'landing'
+}
+
+function getPathForMode(mode) {
+  return MODE_PATHS[mode] ?? '/'
+}
+
+function getContentModeFromState(state) {
+  if (!state?.yaml) return 'playbook'
+  const detected = detectContentType(state.yaml)
+  return detected === 'unknown' ? 'playbook' : detected
+}
+
+function getModeFromLocation(state) {
+  const pathMode = getModeFromPath(globalThis.location.pathname)
+  if (pathMode !== 'landing') return pathMode
+  if (state?.yaml) return getContentModeFromState(state)
+  return 'landing'
+}
+
+function updateBrowserPath(mode, method = 'replaceState') {
+  const nextPath = getPathForMode(mode)
+  const nextUrl = `${nextPath}${globalThis.location.hash}`
+  if (`${globalThis.location.pathname}${globalThis.location.hash}` !== nextUrl) {
+    globalThis.history[method](null, '', nextUrl)
+  }
+}
 
 //  Debounce helper 
 function useDebounce(value, delay) {
@@ -50,14 +94,15 @@ const MODE_META = {
 
 export default function App() {
   const urlState = useMemo(() => loadFromUrl(), [])
+  const initialMode = useMemo(() => getModeFromLocation(urlState), [urlState])
 
-  const [mode, setMode] = useState(() => urlState ? detectContentType(urlState.yaml ?? '') : 'landing')
+  const [mode, setMode] = useState(initialMode)
 
   // ── Per-mode independent text buffers ─────────────────────────
   const [texts, setTexts] = useState(() => ({
-    playbook: urlState?.yaml ?? SAMPLE_YAML,
-    snippet:  '',
-    jinja2:   SAMPLE_JINJA2,
+    playbook: initialMode === 'playbook' && urlState?.yaml ? urlState.yaml : SAMPLE_YAML,
+    snippet: initialMode === 'snippet' && urlState?.yaml ? urlState.yaml : '',
+    jinja2: initialMode === 'jinja2' && urlState?.yaml ? urlState.yaml : SAMPLE_JINJA2,
   }))
 
   const setCurrentText = useCallback((v, forMode) => {
@@ -77,17 +122,37 @@ export default function App() {
   const debouncedYaml  = useDebounce(yamlText, 400)
   const debouncedFacts = useDebounce(facts, 300)
 
-  // Auto re-detect mode when playbook/snippet content changes
-  // (never auto-switch away from jinja2 — that mode is manually selected)
-  const debouncedForMode = useDebounce(debouncedYaml, 200)
   useEffect(() => {
-    if (mode === 'landing' || mode === 'jinja2') return
-    const detected = detectContentType(debouncedForMode)
-    if (detected !== 'unknown' && detected !== mode) setMode(detected)
-  }, [debouncedForMode]) // eslint-disable-line
+    if (mode === 'landing' && globalThis.location.pathname !== '/' && !globalThis.location.hash) {
+      updateBrowserPath('landing')
+      return
+    }
+    if (mode !== 'landing') updateBrowserPath(mode)
+  }, [mode])
+
+  useEffect(() => {
+    const onPopState = () => {
+      const nextState = loadFromUrl()
+      const nextMode = getModeFromLocation(nextState)
+      setMode(nextMode)
+      if (nextState?.yaml) {
+        setTexts((prev) => ({
+          ...prev,
+          [nextMode === 'landing' ? getContentModeFromState(nextState) : nextMode]: nextState.yaml,
+        }))
+      }
+      if (nextState?.facts) setFacts(nextState.facts)
+      setSelectedNode(null)
+      setHighlightLines(null)
+    }
+
+    globalThis.addEventListener('popstate', onPopState)
+    return () => globalThis.removeEventListener('popstate', onPopState)
+  }, [])
 
   // Manual mode switch — keep buffers independent
   const handleSetMode = useCallback((newMode) => {
+    updateBrowserPath(newMode, 'pushState')
     setMode(newMode)
     setSelectedNode(null)
     setHighlightLines(null)
@@ -133,10 +198,11 @@ export default function App() {
 
   // Magic Paste — put content into the right buffer
   const handlePasteContent = useCallback((text) => {
-    if (!text || !text.trim()) return
+    if (!text?.trim()) return
     const detected = detectContentType(text)
     const targetMode = detected === 'unknown' ? 'snippet' : detected
     setTexts((prev) => ({ ...prev, [targetMode]: text }))
+    updateBrowserPath(targetMode, 'pushState')
     setMode(targetMode)
     setSelectedNode(null)
     setHighlightLines(null)
@@ -154,38 +220,44 @@ export default function App() {
       const text = e.clipboardData?.getData('text/plain')
       if (text) handlePasteContent(text)
     }
-    window.addEventListener('paste', onPaste)
-    return () => window.removeEventListener('paste', onPaste)
+    globalThis.addEventListener('paste', onPaste)
+    return () => globalThis.removeEventListener('paste', onPaste)
   }, [mode, handlePasteContent])
 
   // Share — encode current mode's text
   const handleShare = useCallback(() => {
+    updateBrowserPath(mode)
     pushToUrl(yamlText, facts)
-    navigator.clipboard?.writeText(window.location.href).then(() => {
+    globalThis.navigator.clipboard?.writeText(globalThis.location.href).then(() => {
       setCopySuccess(true)
       setTimeout(() => setCopySuccess(false), 2500)
     })
-  }, [yamlText, facts])
+  }, [mode, yamlText, facts])
 
   // Reset
   const handleReset = useCallback(() => {
     setTexts({ playbook: SAMPLE_YAML, snippet: '', jinja2: SAMPLE_JINJA2 })
     setFacts(DEFAULT_FACTS)
+    updateBrowserPath('playbook', 'pushState')
     setMode('playbook')
     setSelectedNode(null)
     setHighlightLines(null)
-    window.history.replaceState(null, '', window.location.pathname)
   }, [])
 
   const handleLoadSample = useCallback(() => {
     setTexts((prev) => ({ ...prev, playbook: SAMPLE_YAML }))
+    updateBrowserPath('playbook', 'pushState')
     setMode('playbook')
     setSelectedNode(null)
     setHighlightLines(null)
   }, [])
 
   if (mode === 'landing') {
-    return <LandingScreen onPaste={handlePasteContent} onLoadSample={handleLoadSample} />
+    return <LandingScreen onPaste={handlePasteContent} onLoadSample={handleLoadSample} onOpenAbout={() => handleSetMode('about')} />
+  }
+
+  if (mode === 'about') {
+    return <AboutPage onNavigateHome={() => handleSetMode('landing')} />
   }
 
   return (
@@ -195,7 +267,7 @@ export default function App() {
         <div className="flex items-center gap-2 shrink-0">
           <BookOpen size={16} className="text-cyan-400" />
           <button
-            onClick={() => setMode('landing')}
+            onClick={() => handleSetMode('landing')}
             className="text-cyan-400 font-mono font-bold tracking-wider text-sm hover:text-cyan-300 transition-colors"
           >
             Ansible<span className="text-white">101</span>
@@ -221,6 +293,13 @@ export default function App() {
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={() => handleSetMode('about')}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded border border-slate-700 text-slate-400 hover:border-slate-500 hover:text-white text-xs font-mono transition-all"
+          >
+            About
+          </button>
+
           {parseError && mode === 'playbook' && (
             <div className="flex items-center gap-1.5 rounded bg-red-950 border border-red-800 px-2 py-1 max-w-[220px]">
               <AlertCircle size={12} className="text-red-400 shrink-0" />
@@ -358,21 +437,34 @@ function EmptyQuickCard() {
   )
 }
 
-function LandingScreen({ onPaste, onLoadSample }) {
+function LandingScreen({ onPaste, onLoadSample, onOpenAbout }) {
   const [dragOver, setDragOver] = useState(false)
+  const dropRef = useRef(null)
 
   const handleDrop = useCallback((e) => {
     e.preventDefault()
     setDragOver(false)
+    // Prefer file contents over plain-text drag
+    const file = e.dataTransfer?.files?.[0]
+    if (file) {
+      file.text().then((result) => { if (result) onPaste(result) })
+      return
+    }
     const text = e.dataTransfer?.getData('text/plain')
     if (text) onPaste(text)
   }, [onPaste])
 
+  const handleDragLeave = useCallback((e) => {
+    // Only clear when pointer truly leaves the outer container
+    if (!dropRef.current?.contains(e.relatedTarget)) setDragOver(false)
+  }, [])
+
   return (
     <div
+      ref={dropRef}
       className="h-screen bg-slate-950 text-white flex flex-col items-center justify-center gap-8 px-6"
       onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
-      onDragLeave={() => setDragOver(false)}
+      onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
       <div className="flex flex-col items-center gap-2">
@@ -397,10 +489,10 @@ function LandingScreen({ onPaste, onLoadSample }) {
       >
         <ClipboardPaste size={36} className="text-slate-600" />
         <div className="text-center">
-          <p className="text-white font-mono text-lg font-semibold">
-            Press{' '}
+          <p className="text-white font-mono text-lg font-semibold flex items-center justify-center gap-1.5">
+            <span>Press</span>
             <kbd className="inline-block px-2 py-0.5 rounded bg-slate-800 border border-slate-600 text-cyan-400 text-sm font-mono mx-1">Ctrl+V</kbd>
-            to paste
+            <span>to paste</span>
           </p>
           <p className="text-slate-500 text-xs font-mono mt-1">
             or drag & drop your YAML, task snippet, or Jinja2 expression
@@ -443,6 +535,13 @@ function LandingScreen({ onPaste, onLoadSample }) {
         endorsed by, or sponsored by Red&nbsp;Hat,&nbsp;Inc. Ansible® is a registered
         trademark of Red&nbsp;Hat,&nbsp;Inc.
       </p>
+
+      <button
+        onClick={onOpenAbout}
+        className="text-[11px] font-mono text-slate-500 transition-colors hover:text-cyan-400"
+      >
+        About / Legal
+      </button>
     </div>
   )
 }
