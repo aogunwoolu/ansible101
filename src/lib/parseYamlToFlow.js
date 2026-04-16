@@ -128,9 +128,10 @@ export function parsePlaybook(plays, rawYaml, facts = {}) {
         edges.push({
           id: `e${diamondId}-true-${trueId}`,
           source: diamondId,
+          sourceHandle: 'true',
           target: trueId,
           label: 'True',
-          type: 'default',
+          type: 'smoothstep',
           style: { stroke: condResult ? '#4ade80' : '#4ade8066' },
           labelStyle: { fill: condResult ? '#4ade80' : '#4ade8066', fontFamily: 'monospace', fontSize: 11 },
         })
@@ -147,9 +148,10 @@ export function parsePlaybook(plays, rawYaml, facts = {}) {
         edges.push({
           id: `e${diamondId}-false-${skipId}`,
           source: diamondId,
+          sourceHandle: 'false',
           target: skipId,
           label: 'False',
-          type: 'default',
+          type: 'smoothstep',
           style: { stroke: !condResult ? '#f87171' : '#f8717166' },
           labelStyle: { fill: !condResult ? '#f87171' : '#f8717166', fontFamily: 'monospace', fontSize: 11 },
         })
@@ -203,13 +205,14 @@ export function parsePlaybook(plays, rawYaml, facts = {}) {
           edges.push({
             id: `e${taskExitId}-handler-${hId}`,
             source: taskExitId,
+            sourceHandle: null,
             target: hId,
-            type: 'default',
+            type: 'smoothstep',
             animated: false,
-            className: 'dashed',
             style: { strokeDasharray: '6,3', stroke: '#fbbf24', strokeWidth: 1.5 },
             label: 'notify',
             labelStyle: { fill: '#fbbf24', fontFamily: 'monospace', fontSize: 10 },
+            zIndex: 10,
           })
         })
       }

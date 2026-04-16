@@ -126,16 +126,28 @@ export function LoopNode({ data, selected }) {
 export function ConditionalNode({ data, selected }) {
   return (
     <div className="relative flex items-center justify-center" style={{ width: 160, height: 80 }}>
-      <Handle type="target" position={Position.Top} style={{ ...handleStyle, top: 4 }} />
-      {/* Diamond via CSS rotate trick */}
-      <div
-        className={`absolute inset-0 rounded border-2 transition-all
-          ${selected ? 'border-cyber-cyan shadow-[0_0_10px_#22d3ee]' : 'border-amber-500'}
-          bg-amber-950`}
-        style={{ transform: 'rotate(45deg)', margin: 10 }}
-      />
-      <div className="relative z-10 text-center px-2">
-        <div className="text-amber-400 text-[10px] font-mono leading-tight max-w-[130px] truncate">
+      <Handle type="target" position={Position.Top} style={{ ...handleStyle, top: 2 }} />
+      {/* Diamond via SVG polygon — avoids squash from rotating a non-square div */}
+      <svg className="absolute inset-0" width="160" height="80" style={{ overflow: 'visible' }}>
+        <defs>
+          <filter id="cond-glow" x="-20%" y="-40%" width="140%" height="180%">
+            <feGaussianBlur stdDeviation="3" result="blur" />
+            <feMerge>
+              <feMergeNode in="blur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+        </defs>
+        <polygon
+          points="80,3 157,40 80,77 3,40"
+          fill="#1c0f00"
+          stroke={selected ? '#22d3ee' : '#f59e0b'}
+          strokeWidth={2}
+          filter={selected ? 'url(#cond-glow)' : undefined}
+        />
+      </svg>
+      <div className="relative z-10 text-center" style={{ maxWidth: 100 }}>
+        <div className="text-amber-400 text-[10px] font-mono leading-tight break-words">
           {data.label}
         </div>
       </div>
@@ -144,13 +156,13 @@ export function ConditionalNode({ data, selected }) {
         type="source"
         position={Position.Right}
         id="true"
-        style={{ ...handleStyle, background: '#4ade80', right: -6 }}
+        style={{ ...handleStyle, background: '#4ade80', right: 2 }}
       />
       <Handle
         type="source"
         position={Position.Left}
         id="false"
-        style={{ ...handleStyle, background: '#f87171', left: -6 }}
+        style={{ ...handleStyle, background: '#f87171', left: 2 }}
       />
     </div>
   )
