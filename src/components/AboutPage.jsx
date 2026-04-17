@@ -4,7 +4,7 @@ import { BookOpen, Scale, ShieldCheck, ExternalLink } from 'lucide-react'
 
 export default function AboutPage({ onNavigateHome }) {
   return (
-    <div className="min-h-screen bg-slate-950 text-white">
+    <div className="h-screen overflow-y-auto bg-slate-950 text-white">
       <header className="border-b border-slate-800 bg-slate-950">
         <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
           <button
