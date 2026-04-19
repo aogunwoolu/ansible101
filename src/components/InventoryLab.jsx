@@ -34,7 +34,7 @@ function ImportModal({ parsed, format, onConfirm, onCancel }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
       <div
-        className="rounded-xl border border-slate-700 bg-slate-900 shadow-2xl p-6 w-[380px] flex flex-col gap-4 animate-scale-in">
+        className="rounded-xl border border-slate-700 bg-slate-900 shadow-2xl p-6 w-[calc(100%-2rem)] max-w-[380px] flex flex-col gap-4 animate-scale-in">
         <div className="flex items-center gap-2">
           <FileInput size={16} className="text-emerald-400" />
           <span className="text-emerald-400 font-mono font-semibold text-sm uppercase tracking-widest">Import Inventory</span>
@@ -45,7 +45,7 @@ function ImportModal({ parsed, format, onConfirm, onCancel }) {
           <span className="text-cyan-300 font-mono">{hostCount} unique host{hostCount !== 1 ? 's' : ''}</span>.
         </p>
         <p className="text-slate-400 text-xs">What would you like to do with your existing inventory?</p>
-        <div className="flex gap-2">
+        <div className="flex flex-col gap-2 sm:flex-row">
           <button
             onClick={() => onConfirm('replace')}
             className="flex-1 py-2 rounded border border-red-800 bg-red-950 text-red-300
@@ -343,8 +343,8 @@ function InventoryEditor({ inventory, onInventoryChange, onHostvarsChange }) {
         {/* Command hint + import bar */}
         <div className="px-4 py-2 border-b border-slate-800/60 bg-slate-950 flex flex-col gap-1.5 shrink-0">
           <div className="flex items-center gap-2">
-            <span className="text-slate-500 text-[10px] font-mono">Export from Ansible:</span>
-            <code className="flex-1 bg-slate-900 border border-slate-800 rounded px-2 py-0.5 text-[10px] font-mono text-emerald-300 select-all">
+            <span className="text-slate-500 text-[10px] font-mono shrink-0">Export from Ansible:</span>
+            <code className="flex-1 min-w-0 overflow-x-auto whitespace-nowrap bg-slate-900 border border-slate-800 rounded px-2 py-0.5 text-[10px] font-mono text-emerald-300 select-all">
               ansible-inventory -i &lt;source&gt; --list &gt; inventory.json
             </code>
             <button
@@ -363,12 +363,12 @@ function InventoryEditor({ inventory, onInventoryChange, onHostvarsChange }) {
               {cmdCopied ? 'Copied' : 'Copy'}
             </button>
           </div>
-          <div className="flex items-center gap-2">
-            <span className="text-slate-600 text-[10px] font-mono flex items-center gap-1.5">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <span className="text-slate-600 text-[10px] font-mono flex flex-wrap items-center gap-1.5">
               Then <ClipboardPaste size={10} /> paste · <Upload size={10} /> drag &amp; drop · or click Import — supports JSON, INI &amp; YAML
             </span>
             {importError && (
-              <span className="ml-auto flex items-center gap-1 text-red-400 text-[10px] font-mono">
+              <span className="flex items-center gap-1 text-red-400 text-[10px] font-mono sm:ml-auto">
                 <AlertTriangle size={10} />{importError}
               </span>
             )}
@@ -392,7 +392,7 @@ function InventoryEditor({ inventory, onInventoryChange, onHostvarsChange }) {
           ))}
 
           {/* Add group row */}
-          <div className="flex items-center gap-2 mt-2">
+          <div className="flex flex-col gap-2 mt-2 sm:flex-row sm:items-center">
             <input
               type="text"
               value={newGroup}
@@ -444,7 +444,7 @@ function HostDetailSidebar({ host, hostvars, inventory, onClose, onGroupClick })
   )
 
   return (
-    <div className="w-64 shrink-0 border-l border-slate-800 bg-slate-950 flex flex-col overflow-hidden animate-slide-in-drawer">
+    <div className="w-full md:w-64 shrink-0 border-t md:border-t-0 border-l-0 md:border-l border-slate-800 bg-slate-950 flex flex-col overflow-hidden animate-slide-in-drawer">
       {/* Header */}
       <div className="px-4 py-3 border-b border-slate-800 flex items-center gap-2 shrink-0 bg-slate-900">
         <Server size={13} className="text-emerald-400 shrink-0" />
@@ -722,7 +722,7 @@ function LimitTester({ inventory, hostvars, selectedHost, onHostClick, limit, on
           <label className="block text-[10px] font-mono text-slate-500 uppercase tracking-wider mb-1.5">
             Limit Pattern
           </label>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:items-center">
             <code className="text-slate-600 text-[11px] font-mono shrink-0">--limit</code>
             <LimitInput
               value={limit}
@@ -762,7 +762,7 @@ function LimitTester({ inventory, hostvars, selectedHost, onHostClick, limit, on
           {showRef && (
             <div className="px-3 pb-3 bg-slate-900/60 flex flex-col gap-3 pt-2">
               {/* Examples */}
-              <div className="grid grid-cols-2 gap-1.5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
                 {EXAMPLE_PATTERNS.map(({ pattern, desc }) => (
                   <button
                     key={pattern}
@@ -882,9 +882,9 @@ export default function InventoryLab({ initialShareState = null, onShareStateCha
   }, [inventory, hostvars, limit, onShareStateChange])
 
   return (
-    <div className="flex flex-1 overflow-hidden animate-fade-up">
+    <div className="flex flex-1 flex-col overflow-y-auto md:flex-row md:overflow-hidden animate-fade-up">
       {/* Left — inventory builder */}
-      <div data-tour="inventory-editor" className="w-[40%] min-w-[280px] border-r border-slate-800 overflow-hidden flex flex-col relative">
+      <div data-tour="inventory-editor" className="w-full h-[50vh] shrink-0 border-b border-slate-800 overflow-hidden flex flex-col relative md:h-auto md:w-[40%] md:min-w-[280px] md:border-b-0 md:border-r">
         <InventoryEditor
           inventory={inventory}
           onInventoryChange={setInventory}
@@ -893,7 +893,7 @@ export default function InventoryLab({ initialShareState = null, onShareStateCha
       </div>
 
       {/* Middle — limit tester */}
-      <div className="flex-1 overflow-hidden flex flex-col min-w-0">
+      <div className="flex-1 h-[45vh] shrink-0 overflow-hidden flex flex-col min-w-0 md:h-auto md:min-h-0">
         <LimitTester
           inventory={inventory}
           hostvars={hostvars}

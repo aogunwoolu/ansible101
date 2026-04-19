@@ -219,6 +219,7 @@ export default function FileExplorer({
   onReorder,
   nodes = [],
   fileErrors = {},
+  isMobile = false,
 }) {
   const [collapsed, setCollapsed] = useState(false)
   const [width, setWidth] = useState(120)
@@ -274,6 +275,61 @@ export default function FileExplorer({
     document.addEventListener('mousemove', onMove)
     document.addEventListener('mouseup', onUp)
   }, [width])
+
+  if (isMobile) {
+    return (
+      <div className="border-b border-slate-800 bg-slate-950 shrink-0">
+        <div className="flex items-center gap-2 px-3 py-2">
+          <span className="text-[9px] font-mono uppercase tracking-[0.14em] text-slate-600 flex-1">files</span>
+          {missingRefs.length > 0 && (
+            <span className="flex items-center gap-1 text-[9px] font-mono text-orange-700/80">
+              <AlertTriangle size={9} />{missingRefs.length}
+            </span>
+          )}
+          <button onClick={onAdd} title="New file" className="p-1 text-slate-600 hover:text-cyan-400 transition-colors shrink-0">
+            <Plus size={12} />
+          </button>
+        </div>
+
+        <div className="overflow-x-auto px-3 pb-3">
+          <div className="flex items-center gap-2 min-w-max">
+            {files.map((file) => {
+              const isMain = file.id === mainFile.id
+              const hasError = !!fileErrors[file.id]
+              const status = isMain ? 'main' : statuses[file.id]
+              return (
+                <button
+                  key={file.id}
+                  onClick={() => onSwitch(file.id)}
+                  className={`rounded-full border px-3 py-1.5 text-[10px] font-mono transition-all ${
+                    activeId === file.id
+                      ? 'border-cyan-500 bg-cyan-950/50 text-cyan-300'
+                      : hasError
+                        ? 'border-red-800 bg-red-950/30 text-red-300'
+                        : status === 'resolved'
+                          ? 'border-teal-800 bg-teal-950/30 text-teal-300'
+                          : 'border-slate-700 bg-slate-900 text-slate-400'
+                  }`}
+                >
+                  {file.name}
+                </button>
+              )
+            })}
+
+            {missingRefs.map((item) => (
+              <button
+                key={item.filename}
+                onClick={() => onAddNamed(item.filename)}
+                className="rounded-full border border-orange-800/60 bg-orange-950/20 px-3 py-1.5 text-[10px] font-mono text-orange-400 transition-all"
+              >
+                + {item.filename}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   /* ── Collapsed strip ── */
   if (collapsed) {

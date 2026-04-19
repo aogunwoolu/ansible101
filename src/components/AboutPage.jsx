@@ -4,9 +4,9 @@ import { BookOpen, Scale, ShieldCheck, ExternalLink } from 'lucide-react'
 
 export default function AboutPage({ onNavigateHome }) {
   return (
-    <div className="h-screen overflow-y-auto bg-slate-950 text-white">
+    <div className="min-h-screen overflow-y-auto bg-slate-950 text-white">
       <header className="border-b border-slate-800 bg-slate-950">
-        <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
+        <div className="mx-auto flex max-w-5xl flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
           <button
             onClick={onNavigateHome}
             className="flex items-center gap-2 text-cyan-400 transition-colors hover:text-cyan-300"
@@ -22,7 +22,7 @@ export default function AboutPage({ onNavigateHome }) {
         </div>
       </header>
 
-      <main className="mx-auto flex max-w-5xl flex-col gap-8 px-6 py-10">
+      <main className="mx-auto flex max-w-5xl flex-col gap-8 px-4 py-8 sm:px-6 sm:py-10">
         <section className="max-w-3xl">
           <div className="mb-3 flex items-center gap-3 text-cyan-400">
             <Scale size={18} />

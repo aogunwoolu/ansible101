@@ -15,6 +15,7 @@ import React, {
 import yaml from 'js-yaml'
 import { parsePlaybook } from './lib/parseYamlToFlow'
 import { pushToUrl, loadFromUrl } from './lib/shareUrl'
+import { toMermaidFlow, toPlantUmlFlow } from './lib/exportFlowText'
 import { SAMPLE_YAML } from './lib/sampleYaml'
 import { SAMPLE_JINJA2 } from './lib/sampleJinja2'
 import { SAMPLE_INVENTORY, SAMPLE_HOSTVARS } from './lib/sampleInventory'
@@ -123,6 +124,7 @@ const MODE_META = {
 export default function App() {
   const urlState = useMemo(() => loadFromUrl(), [])
   const initialMode = useMemo(() => getModeFromLocation(urlState), [urlState])
+  const [isMobile, setIsMobile] = useState(() => globalThis.innerWidth < 768)
 
   const [mode, setMode] = useState(initialMode)
 
@@ -152,11 +154,16 @@ export default function App() {
   const [userVars, setUserVars]                     = useState({})
   const [limitsShareState, setLimitsShareState]     = useState(() => urlState?.limits ?? null)
 
+  useEffect(() => {
+    const onResize = () => setIsMobile(globalThis.innerWidth < 768)
+    globalThis.addEventListener('resize', onResize)
+    return () => globalThis.removeEventListener('resize', onResize)
+  }, [])
+
   // Debounce each mode's buffer independently — prevents stale cross-mode text
   // reaching the wrong parser when switching modes.
   const debouncedPlaybook  = useDebounce(texts.playbook, 400)
   const debouncedSnippet   = useDebounce(texts.snippet,  400)
-  const debouncedJinja2    = useDebounce(texts.jinja2,   400)
   const debouncedFacts = useDebounce(facts, 300)
   const debouncedExtraFiles = useDebounce(extraFiles, 400)
   // Merge user-supplied playbook vars on top of ansible facts for rendering
@@ -338,6 +345,30 @@ export default function App() {
     return Boolean((yamlText ?? '').trim()) || extraFiles.length > 0
   }, [mode, yamlText, extraFiles.length, limitsShareState])
 
+  const downloadTextFile = useCallback((filename, content) => {
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
+    const url = globalThis.URL.createObjectURL(blob)
+    const a = globalThis.document.createElement('a')
+    a.href = url
+    a.download = filename
+    globalThis.document.body.appendChild(a)
+    a.click()
+    a.remove()
+    globalThis.URL.revokeObjectURL(url)
+  }, [])
+
+  const handleExportMermaid = useCallback(() => {
+    if (mode !== 'playbook' || nodes.length === 0) return
+    const content = toMermaidFlow(nodes, edges)
+    downloadTextFile('ansible101-flow.mmd', content)
+  }, [mode, nodes, edges, downloadTextFile])
+
+  const handleExportUml = useCallback(() => {
+    if (mode !== 'playbook' || nodes.length === 0) return
+    const content = toPlantUmlFlow(nodes, edges)
+    downloadTextFile('ansible101-flow.puml', content)
+  }, [mode, nodes, edges, downloadTextFile])
+
   // Reset
   const handleReset = useCallback(() => {
     setTexts({ playbook: SAMPLE_YAML, snippet: '', jinja2: SAMPLE_JINJA2 })
@@ -497,9 +528,9 @@ export default function App() {
   }
 
   return (
-    <div className="flex flex-col h-screen bg-slate-950 text-white overflow-hidden">
+    <div className="flex min-h-screen md:h-screen flex-col bg-slate-950 text-white overflow-x-hidden md:overflow-hidden">
       {/* Top Bar */}
-      <header className="flex items-center justify-between px-4 py-2 border-b border-slate-800 bg-slate-950 shrink-0 z-10 gap-2">
+      <header className="flex shrink-0 flex-col gap-3 border-b border-slate-800 bg-slate-950 px-3 py-3 z-10 md:flex-row md:items-center md:justify-between md:gap-2 md:px-4 md:py-2">
         <div className="flex items-center gap-2 shrink-0">
           <BookOpen size={16} className="text-cyan-400" />
           <button
@@ -511,30 +542,35 @@ export default function App() {
         </div>
 
         {/* Mode selector */}
-        <div data-tour="mode-tabs" className="flex items-center gap-1 rounded-lg border border-slate-800 p-0.5">
-          {Object.entries(MODE_META).map(([key, meta]) => (
-            <button
-              key={key}
-              onClick={() => handleSetMode(key)}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-mono transition-all duration-200 border
-                ${mode === key
-                  ? `${meta.color} bg-slate-800 border-slate-700 shadow-sm`
-                  : 'text-slate-500 border-transparent hover:text-slate-300 hover:bg-slate-800/50'
-                }`}
-            >
-              <meta.Icon size={11} />
-              {meta.label}
-            </button>
-          ))}
+        <div className="flex w-full flex-col gap-1 md:w-auto md:gap-0">
+          <span className="px-1 text-[10px] font-mono uppercase tracking-[0.16em] text-slate-600 md:hidden">
+            Main Features
+          </span>
+          <div data-tour="mode-tabs" className="grid w-full grid-cols-2 gap-1 rounded-lg border border-slate-800 p-1 md:flex md:w-auto md:flex-nowrap md:items-center md:gap-1 md:p-0.5">
+            {Object.entries(MODE_META).map(([key, meta]) => (
+              <button
+                key={key}
+                onClick={() => handleSetMode(key)}
+                className={`flex items-center justify-center gap-1.5 px-2.5 py-2 rounded text-xs font-mono transition-all duration-200 border md:justify-start md:py-1
+                  ${mode === key
+                    ? `${meta.color} bg-slate-800 border-slate-700 shadow-sm`
+                    : 'text-slate-500 border-transparent hover:text-slate-300 hover:bg-slate-800/50'
+                  }`}
+              >
+                <meta.Icon size={11} />
+                {meta.label}
+              </button>
+            ))}
+          </div>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex flex-wrap items-center gap-2 shrink-0 md:justify-end">
           <button
             data-tour="btn-vars"
             onClick={() => setShowVarsPanel((v) => !v)}
             title="Toggle Playbook Vars panel"
             className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded border text-xs font-mono transition-all
-              ${mode !== 'playbook' ? 'invisible pointer-events-none' : ''}
+              ${mode !== 'playbook' ? 'hidden' : ''}
               ${showVarsPanel && mode === 'playbook'
                 ? 'border-violet-600 text-violet-300 bg-violet-950'
                 : 'border-slate-700 text-slate-500 hover:text-violet-400 hover:border-violet-700'
@@ -545,7 +581,7 @@ export default function App() {
           </button>
 
           {parseError && mode === 'playbook' && (
-            <div className="flex items-center gap-1.5 rounded bg-red-950 border border-red-800 px-2 py-1 max-w-[220px] animate-fade-in">
+            <div className="flex items-center gap-1.5 rounded bg-red-950 border border-red-800 px-2 py-1 max-w-full md:max-w-[220px] animate-fade-in">
               <AlertCircle size={12} className="text-red-400 shrink-0" />
               <span className="text-red-300 text-[10px] font-mono truncate">{parseError?.message}</span>
             </div>
@@ -615,7 +651,7 @@ export default function App() {
       </header>
 
       {/* Body */}
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 flex-col overflow-y-auto md:flex-row md:overflow-hidden">
         {mode === 'limits' && (
           <InventoryLab
             initialShareState={limitsShareState}
@@ -628,9 +664,14 @@ export default function App() {
         <div
           data-tour="editor-pane"
           {...(mode === 'playbook' ? dropProps : {})}
-          className={`relative flex flex-col border-r border-slate-800 overflow-hidden transition-colors
+          className={`relative shrink-0 flex flex-col border-b border-slate-800 md:border-b-0 md:border-r overflow-visible md:overflow-hidden transition-colors
             ${mode === 'playbook' && isDragging ? 'bg-cyan-950/30 border-cyan-700' : ''}
-            ${mode === 'jinja2' ? 'w-[48%]' : mode === 'playbook' ? 'w-[35%] min-w-[260px]' : 'w-[30%] min-w-[240px]'}`}>
+            ${mode === 'jinja2'
+              ? 'w-full h-[45vh] md:h-auto md:w-[48%]'
+              : mode === 'playbook'
+                ? 'w-full h-auto md:h-auto md:w-[35%] md:min-w-[260px]'
+                : 'w-full h-[42vh] md:h-auto md:w-[30%] md:min-w-[240px]'
+            }`}>
           {mode === 'playbook' && isDragging && (
             <div className="absolute inset-0 z-20 flex flex-col items-center justify-center pointer-events-none gap-2">
               <div className="rounded-lg border-2 border-dashed border-cyan-500/60 bg-cyan-950/60 px-8 py-6 flex flex-col items-center gap-2">
@@ -643,7 +684,7 @@ export default function App() {
             label={mode === 'jinja2' ? 'Jinja2 Expression' : 'Playbook YAML'}
             color={mode === 'jinja2' ? 'text-violet-400' : 'text-cyan-400'}
           />
-          <div className="flex flex-1 overflow-hidden">
+          <div className="flex flex-col overflow-visible md:flex-1 md:flex-row md:overflow-hidden">
             {mode === 'playbook' && (
               <div data-tour="file-explorer" className="contents">
                 <FileExplorer
@@ -657,11 +698,12 @@ export default function App() {
                   onReorder={handleReorderFile}
                   nodes={nodes}
                   fileErrors={fileErrors}
+                  isMobile={isMobile}
                 />
               </div>
             )}
-            <div className="flex flex-col flex-1 overflow-hidden">
-              <div className="flex-1 overflow-hidden">
+            <div className="flex flex-col flex-1 overflow-visible md:overflow-hidden">
+              <div className="h-[42vh] min-h-[280px] shrink-0 overflow-hidden md:flex-1 md:h-auto md:min-h-0">
                 <YamlEditor
                   value={editorValue}
                   onChange={handleEditorChange}
@@ -689,24 +731,30 @@ export default function App() {
         {/* Right area  mode-specific */}
         {mode === 'playbook' && (
           <>
-            <div className="flex flex-col flex-1 overflow-hidden border-r border-slate-800 animate-fade-up" data-tour="flow-pane">
+            <div className="flex shrink-0 flex-col w-full h-[55vh] overflow-hidden border-b border-slate-800 animate-fade-up md:h-auto md:min-h-0 md:flex-1 md:border-b-0 md:border-r" data-tour="flow-pane">
               <PaneHeader label="Execution Flow" color="text-slate-400" />
               <div className="flex-1 overflow-hidden">
                 {nodes.length > 0 ? (
-                  <FlowCanvas nodes={nodes} edges={edges} onNodeClick={handleNodeClick} />
+                  <FlowCanvas
+                    nodes={nodes}
+                    edges={edges}
+                    onNodeClick={handleNodeClick}
+                    onExportMermaid={handleExportMermaid}
+                    onExportUml={handleExportUml}
+                  />
                 ) : (
                   <EmptyFlow parseError={parseError} />
                 )}
               </div>
             </div>
-            <div className="flex flex-col w-[26%] min-w-[200px] overflow-hidden animate-fade-up" data-tour="human-sidebar" style={{ animationDelay: '40ms' }}>
+            <div className="flex shrink-0 flex-col w-full h-[38vh] overflow-hidden animate-fade-up md:h-auto md:w-[26%] md:min-w-[200px] md:min-h-0" data-tour="human-sidebar" style={{ animationDelay: '40ms' }}>
               <HumanSidebar plays={plays} selectedNode={selectedNode} />
             </div>
           </>
         )}
 
         {mode === 'snippet' && (
-          <div className="flex-1 overflow-hidden animate-fade-up" data-tour="snippet-pane">
+          <div className="flex-1 shrink-0 h-[42vh] overflow-hidden animate-fade-up md:h-auto md:min-h-0" data-tour="snippet-pane">
             {snippetTask
               ? <QuickCard task={snippetTask} facts={facts} />
               : <EmptyQuickCard />
@@ -715,7 +763,7 @@ export default function App() {
         )}
 
         {mode === 'jinja2' && (
-          <div className="flex-1 overflow-hidden animate-fade-up" data-tour="jinja2-pane">
+          <div className="flex-1 shrink-0 h-[42vh] overflow-hidden animate-fade-up md:h-auto md:min-h-0" data-tour="jinja2-pane">
             <PipelineView expression={jinja2Text} facts={mergedFacts} />
           </div>
         )}
@@ -807,7 +855,7 @@ function LandingScreen({
   return (
     <div
       ref={dropRef}
-      className="h-screen bg-slate-950 text-white flex flex-col items-center justify-center gap-8 px-6"
+      className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center gap-8 px-4 py-10 sm:px-6"
       onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -826,7 +874,7 @@ function LandingScreen({
       </div>
 
       <div
-        className={`w-full max-w-xl rounded-2xl border-2 border-dashed p-12 flex flex-col items-center gap-4 transition-all
+        className={`w-full max-w-xl rounded-2xl border-2 border-dashed p-6 sm:p-12 flex flex-col items-center gap-4 transition-all
           ${dragOver
             ? 'border-cyan-400 bg-cyan-950/20 shadow-[0_0_30px_#22d3ee22]'
             : 'border-slate-700 hover:border-slate-600'

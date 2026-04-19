@@ -85,37 +85,40 @@ export default function PlayVarsPanel({ yamlText, plays, userVars, onUserVarsCha
   return (
     <div className="flex flex-col border-t border-slate-700 bg-slate-950">
       {/* Header */}
-      <button
-        onClick={() => setCollapsed((c) => !c)}
-        className="flex items-center gap-2 px-3 py-2 text-xs font-mono font-semibold uppercase tracking-widest text-violet-400 hover:text-violet-300 transition-colors w-full text-left"
-      >
-        {collapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
-        <Variable size={13} />
-        Playbook Vars
-        <span className="ml-1 text-slate-500 normal-case font-normal tracking-normal">
-          ({detectedVars.length} detected)
-        </span>
+      <div className="flex flex-col gap-2 border-b border-slate-800 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+        <button
+          onClick={() => setCollapsed((c) => !c)}
+          className="flex w-full items-center gap-2 text-left text-xs font-mono font-semibold uppercase tracking-widest text-violet-400 hover:text-violet-300 transition-colors sm:w-auto"
+        >
+          {collapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
+          <Variable size={13} />
+          Playbook Vars
+          <span className="ml-1 text-slate-500 normal-case font-normal tracking-normal">
+            ({detectedVars.length} detected)
+          </span>
+        </button>
+
         {!collapsed && (
           <button
-            onClick={(e) => { e.stopPropagation(); handleReset() }}
+            onClick={handleReset}
             title="Reset to playbook defaults"
-            className="ml-auto flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono border border-slate-700 text-slate-500 hover:text-slate-300 hover:border-slate-500 transition-all"
+            className="inline-flex items-center justify-center gap-1 rounded border border-slate-700 px-2 py-1 text-[10px] font-mono text-slate-500 transition-all hover:border-slate-500 hover:text-slate-300 sm:ml-auto"
           >
             <RefreshCw size={10} />
             Reset
           </button>
         )}
-      </button>
+      </div>
 
       {!collapsed && (
-        <div className="px-3 pb-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 items-center">
+        <div className="px-3 py-3 grid grid-cols-1 gap-2.5 md:grid-cols-[auto_1fr] md:gap-x-3 md:gap-y-1.5 md:items-center">
           {detectedVars.map((name) => {
             const fromPlay = playVarsDefaults[name] !== undefined
             return (
-              <React.Fragment key={name}>
+              <div key={name} className="grid grid-cols-1 gap-1 md:contents">
                 <label
                   htmlFor={`pv-${name}`}
-                  className="text-[11px] font-mono text-slate-400 whitespace-nowrap"
+                  className="text-[11px] font-mono text-slate-400 md:whitespace-nowrap"
                   title={fromPlay ? 'Defined in play vars' : 'Referenced but not defined in vars'}
                 >
                   <span className={fromPlay ? 'text-violet-300' : 'text-slate-400'}>
@@ -132,10 +135,10 @@ export default function PlayVarsPanel({ yamlText, plays, userVars, onUserVarsCha
                   placeholder={fromPlay ? playVarsDefaults[name] : 'value…'}
                   onChange={(e) => handleChange(name, e.target.value)}
                   className="w-full bg-slate-900 border border-slate-700 focus:border-violet-600
-                    rounded px-2 py-0.5 text-[11px] font-mono text-slate-200
+                    rounded px-2 py-1.5 text-[11px] font-mono text-slate-200
                     outline-none transition-colors placeholder:text-slate-600"
                 />
-              </React.Fragment>
+              </div>
             )
           })}
         </div>
