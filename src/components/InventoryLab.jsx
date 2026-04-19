@@ -329,7 +329,7 @@ function InventoryEditor({ inventory, onInventoryChange, onHostvarsChange }) {
             <Upload size={10} />
             Import
           </button>
-          <input ref={fileInputRef} type="file" accept=".ini,.cfg,.yml,.yaml,.inv,*" className="hidden" onChange={handleFileChange} />
+          <input ref={fileInputRef} type="file" accept=".json,.ini,.cfg,.yml,.yaml,.inv,*" className="hidden" onChange={handleFileChange} />
           <button
             onClick={handleReset}
             className="flex items-center gap-1 px-2 py-0.5 rounded border border-slate-700
