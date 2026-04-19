@@ -551,7 +551,7 @@ export default function App() {
               <button
                 key={key}
                 onClick={() => handleSetMode(key)}
-                className={`flex items-center justify-center gap-1.5 px-2.5 py-2 rounded text-xs font-mono transition-all duration-200 border md:justify-start md:py-1
+                className={`flex items-center justify-center gap-1.5 px-2.5 py-2 min-h-[42px] rounded text-xs font-mono transition-all duration-200 border md:justify-start md:min-h-0 md:py-1
                   ${mode === key
                     ? `${meta.color} bg-slate-800 border-slate-700 shadow-sm`
                     : 'text-slate-500 border-transparent hover:text-slate-300 hover:bg-slate-800/50'
@@ -569,7 +569,7 @@ export default function App() {
             data-tour="btn-vars"
             onClick={() => setShowVarsPanel((v) => !v)}
             title="Toggle Playbook Vars panel"
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded border text-xs font-mono transition-all
+            className={`flex items-center gap-1.5 px-2.5 py-2 min-h-[40px] rounded border text-xs font-mono transition-all md:min-h-0 md:py-1.5
               ${mode !== 'playbook' ? 'hidden' : ''}
               ${showVarsPanel && mode === 'playbook'
                 ? 'border-violet-600 text-violet-300 bg-violet-950'
@@ -589,7 +589,7 @@ export default function App() {
 
           <button
             onClick={() => handleSetMode('about')}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded border border-slate-700 text-slate-400 hover:border-slate-500 hover:text-white text-xs font-mono transition-all"
+            className="flex items-center gap-1.5 px-2.5 py-2 min-h-[40px] rounded border border-slate-700 text-slate-400 hover:border-slate-500 hover:text-white text-xs font-mono transition-all md:min-h-0 md:py-1.5"
           >
             About
           </button>
@@ -597,7 +597,7 @@ export default function App() {
             data-tour="btn-facts"
             onClick={() => setShowMockPanel((v) => !v)}
             title="Toggle Mock Facts panel"
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded border text-xs font-mono transition-all
+            className={`flex items-center gap-1.5 px-2.5 py-2 min-h-[40px] rounded border text-xs font-mono transition-all md:min-h-0 md:py-1.5
               ${showMockPanel
                 ? 'border-amber-600 text-amber-300 bg-amber-950'
                 : 'border-slate-700 text-slate-500 hover:text-amber-400 hover:border-amber-700'
@@ -609,7 +609,7 @@ export default function App() {
 
           <button
             onClick={handleReset}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded border border-slate-700 hover:border-slate-500 text-slate-400 hover:text-white text-xs font-mono transition-all"
+            className="flex items-center gap-1.5 px-2.5 py-2 min-h-[40px] rounded border border-slate-700 hover:border-slate-500 text-slate-400 hover:text-white text-xs font-mono transition-all md:min-h-0 md:py-1.5"
           >
             <RotateCcw size={12} />
             Reset
@@ -618,7 +618,7 @@ export default function App() {
           <button
             onClick={() => startTour(mode)}
             title="Start walkthrough for this page"
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded border border-slate-700 text-slate-400 hover:border-cyan-700 hover:text-cyan-400 text-xs font-mono transition-all"
+            className="flex items-center gap-1.5 px-2.5 py-2 min-h-[40px] rounded border border-slate-700 text-slate-400 hover:border-cyan-700 hover:text-cyan-400 text-xs font-mono transition-all md:min-h-0 md:py-1.5"
           >
             <HelpCircle size={12} />
             Tour
@@ -629,7 +629,7 @@ export default function App() {
               <button
                 data-tour="btn-share"
                 onClick={handleShare}
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded border text-xs font-mono transition-all
+                className={`flex items-center gap-1.5 px-2.5 py-2 min-h-[40px] rounded border text-xs font-mono transition-all md:min-h-0 md:py-1.5
                   ${copySuccess
                     ? 'border-green-500 text-green-400 bg-green-950'
                     : 'border-cyan-800 hover:border-cyan-500 text-cyan-400 hover:text-cyan-300'
@@ -639,7 +639,7 @@ export default function App() {
                 {copySuccess ? 'Copied!' : 'Share'}
               </button>
               <span
-                className="inline-flex items-center justify-center text-slate-600 hover:text-slate-400 transition-colors"
+                className="inline-flex min-h-[40px] min-w-[40px] items-center justify-center rounded text-slate-600 hover:text-slate-400 transition-colors"
                 title="Share stores data in the URL hash only. No server upload is performed."
                 aria-label="Sharing privacy note"
               >

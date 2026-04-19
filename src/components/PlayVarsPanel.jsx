@@ -88,7 +88,7 @@ export default function PlayVarsPanel({ yamlText, plays, userVars, onUserVarsCha
       <div className="flex flex-col gap-2 border-b border-slate-800 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
         <button
           onClick={() => setCollapsed((c) => !c)}
-          className="flex w-full items-center gap-2 text-left text-xs font-mono font-semibold uppercase tracking-widest text-violet-400 hover:text-violet-300 transition-colors sm:w-auto"
+          className="flex w-full items-center gap-2 min-h-[40px] text-left text-xs font-mono font-semibold uppercase tracking-widest text-violet-400 hover:text-violet-300 transition-colors sm:w-auto sm:min-h-0"
         >
           {collapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
           <Variable size={13} />
@@ -102,7 +102,7 @@ export default function PlayVarsPanel({ yamlText, plays, userVars, onUserVarsCha
           <button
             onClick={handleReset}
             title="Reset to playbook defaults"
-            className="inline-flex items-center justify-center gap-1 rounded border border-slate-700 px-2 py-1 text-[10px] font-mono text-slate-500 transition-all hover:border-slate-500 hover:text-slate-300 sm:ml-auto"
+            className="inline-flex items-center justify-center gap-1 rounded border border-slate-700 px-2 py-2 min-h-[40px] text-[10px] font-mono text-slate-500 transition-all hover:border-slate-500 hover:text-slate-300 sm:ml-auto sm:min-h-0 sm:py-1"
           >
             <RefreshCw size={10} />
             Reset
@@ -135,7 +135,7 @@ export default function PlayVarsPanel({ yamlText, plays, userVars, onUserVarsCha
                   placeholder={fromPlay ? playVarsDefaults[name] : 'value…'}
                   onChange={(e) => handleChange(name, e.target.value)}
                   className="w-full bg-slate-900 border border-slate-700 focus:border-violet-600
-                    rounded px-2 py-1.5 text-[11px] font-mono text-slate-200
+                    rounded px-2 py-2 min-h-[40px] text-[11px] font-mono text-slate-200
                     outline-none transition-colors placeholder:text-slate-600"
                 />
               </div>

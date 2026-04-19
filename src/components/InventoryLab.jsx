@@ -77,11 +77,11 @@ function ImportModal({ parsed, format, onConfirm, onCancel }) {
 
 function HostPill({ name, onRemove }) {
   return (
-    <span className="inline-flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-[10px] font-mono text-slate-300">
+    <span className="inline-flex items-center gap-1 pl-2 pr-1 py-1 sm:py-0.5 rounded-full bg-slate-800 border border-slate-700 text-[10px] font-mono text-slate-300">
       {name}
       <button
         onClick={onRemove}
-        className="text-slate-600 hover:text-red-400 transition-colors ml-0.5"
+        className="text-slate-600 hover:text-red-400 transition-colors ml-0.5 p-1"
       >
         <XCircle size={11} />
       </button>
@@ -104,7 +104,7 @@ function GroupRow({ groupName, hosts, allHosts, onAddHost, onRemoveHost, onRemov
     <div className="rounded border border-slate-800 bg-slate-900 mb-2 overflow-hidden">
       {/* Group header */}
       <div className="flex items-center gap-2 px-3 py-2 bg-slate-800/60 border-b border-slate-800">
-        <button onClick={() => setOpen(v => !v)} className="text-slate-500 hover:text-slate-300 transition-colors">
+        <button onClick={() => setOpen(v => !v)} className="text-slate-500 hover:text-slate-300 transition-colors p-1">
           {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
         </button>
         <Users size={12} className="text-emerald-500 shrink-0" />
@@ -113,7 +113,7 @@ function GroupRow({ groupName, hosts, allHosts, onAddHost, onRemoveHost, onRemov
         {!isAll && (
           <button
             onClick={() => onRemoveGroup(groupName)}
-            className="text-slate-700 hover:text-red-400 transition-colors ml-1"
+            className="text-slate-700 hover:text-red-400 transition-colors ml-1 p-1"
             title="Remove group"
           >
             <Trash2 size={11} />
@@ -159,7 +159,7 @@ function GroupRow({ groupName, hosts, allHosts, onAddHost, onRemoveHost, onRemov
               onClick={handleAdd}
               disabled={!input.trim()}
               className="flex items-center gap-1 px-2 py-0.5 rounded border border-slate-700
-                text-[10px] font-mono text-slate-500 hover:text-emerald-300 hover:border-emerald-700
+                text-[10px] font-mono text-slate-500 hover:text-emerald-300 hover:border-emerald-700 min-h-[36px] sm:min-h-0
                 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
             >
               <Plus size={10} />
@@ -324,7 +324,7 @@ function InventoryEditor({ inventory, onInventoryChange, onHostvarsChange }) {
             onClick={() => fileInputRef.current?.click()}
             title="Upload inventory file"
             className="flex items-center gap-1 px-2 py-0.5 rounded border border-slate-700
-              text-[10px] font-mono text-slate-500 hover:text-emerald-300 hover:border-emerald-700 transition-all"
+              text-[10px] font-mono text-slate-500 hover:text-emerald-300 hover:border-emerald-700 transition-all min-h-[36px] sm:min-h-0"
           >
             <Upload size={10} />
             Import
@@ -333,7 +333,7 @@ function InventoryEditor({ inventory, onInventoryChange, onHostvarsChange }) {
           <button
             onClick={handleReset}
             className="flex items-center gap-1 px-2 py-0.5 rounded border border-slate-700
-              text-[10px] font-mono text-slate-500 hover:text-slate-300 hover:border-slate-500 transition-all"
+              text-[10px] font-mono text-slate-500 hover:text-slate-300 hover:border-slate-500 transition-all min-h-[36px] sm:min-h-0"
           >
             <RefreshCw size={10} />
             Reset
@@ -355,6 +355,7 @@ function InventoryEditor({ inventory, onInventoryChange, onHostvarsChange }) {
               }}
               title="Copy command"
               className={`flex items-center gap-1 px-2 py-0.5 rounded border text-[10px] font-mono transition-all
+                min-h-[36px] sm:min-h-0
                 ${cmdCopied
                   ? 'border-emerald-700 text-emerald-300 bg-emerald-950'
                   : 'border-slate-700 text-slate-500 hover:text-emerald-300 hover:border-emerald-700'}`}
@@ -407,7 +408,7 @@ function InventoryEditor({ inventory, onInventoryChange, onHostvarsChange }) {
               onClick={handleAddGroup}
               disabled={!newGroup.trim() || !!inventory[newGroup.trim()]}
               className="flex items-center gap-1 px-3 py-1 rounded border border-slate-700
-                text-[10px] font-mono text-slate-500 hover:text-emerald-300 hover:border-emerald-700
+                text-[10px] font-mono text-slate-500 hover:text-emerald-300 hover:border-emerald-700 min-h-[36px] sm:min-h-0
                 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
             >
               <Plus size={10} />
@@ -444,21 +445,27 @@ function HostDetailSidebar({ host, hostvars, inventory, onClose, onGroupClick })
   )
 
   return (
-    <div className="w-full md:w-64 shrink-0 border-t md:border-t-0 border-l-0 md:border-l border-slate-800 bg-slate-950 flex flex-col overflow-hidden animate-slide-in-drawer">
-      {/* Header */}
-      <div className="px-4 py-3 border-b border-slate-800 flex items-center gap-2 shrink-0 bg-slate-900">
-        <Server size={13} className="text-emerald-400 shrink-0" />
-        <span className="text-emerald-300 font-mono font-semibold text-xs flex-1 truncate" title={host}>{host}</span>
-        <button
-          onClick={onClose}
-          className="text-slate-500 hover:text-white transition-colors rounded p-0.5 hover:bg-slate-700"
-          title="Close (Esc)"
-        >
-          <X size={13} />
-        </button>
-      </div>
+    <>
+      <button
+        aria-label="Close host details"
+        className="fixed inset-0 z-30 bg-black/50 backdrop-blur-[1px] md:hidden"
+        onClick={onClose}
+      />
+      <div className="fixed inset-x-0 bottom-0 z-40 max-h-[65vh] rounded-t-xl border border-slate-800 bg-slate-950 flex flex-col overflow-hidden animate-slide-in-drawer md:static md:inset-auto md:z-auto md:max-h-none md:w-64 md:shrink-0 md:rounded-none md:border-t-0 md:border-l">
+        {/* Header */}
+        <div className="px-4 py-3 border-b border-slate-800 flex items-center gap-2 shrink-0 bg-slate-900">
+          <Server size={13} className="text-emerald-400 shrink-0" />
+          <span className="text-emerald-300 font-mono font-semibold text-xs flex-1 truncate" title={host}>{host}</span>
+          <button
+            onClick={onClose}
+            className="text-slate-500 hover:text-white transition-colors rounded p-0.5 hover:bg-slate-700"
+            title="Close (Esc)"
+          >
+            <X size={13} />
+          </button>
+        </div>
 
-      <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 overflow-y-auto">
         {/* Group membership */}
         <div className="px-4 py-3 border-b border-slate-800/60">
           <p className="text-[9px] font-mono text-slate-500 uppercase tracking-widest mb-2">Member of</p>
@@ -473,7 +480,7 @@ function HostDetailSidebar({ host, hostvars, inventory, onClose, onGroupClick })
                   title={`Add \"${g}\" to limit filter`}
                   className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono
                     bg-slate-900 border border-slate-700 text-slate-300
-                    hover:border-emerald-600 hover:text-emerald-300 hover:bg-emerald-950/30
+                      hover:border-emerald-600 hover:text-emerald-300 hover:bg-emerald-950/30 min-h-[32px] sm:min-h-0
                     transition-all cursor-pointer"
                 >
                   <Users size={8} className="text-emerald-500 shrink-0" />
@@ -513,8 +520,9 @@ function HostDetailSidebar({ host, hostvars, inventory, onClose, onGroupClick })
             </div>
           )}
         </div>
+        </div>
       </div>
-    </div>
+    </>
   )
 }
 
@@ -608,6 +616,7 @@ function MatchedHostBadge({ name, matched, hasHostvars, onClick, style }) {
       style={style}
       title={hasHostvars ? 'Click to view host attributes' : name}
       className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono border transition-all animate-pop-in
+        min-h-[34px] sm:min-h-0
         ${matched
           ? 'bg-emerald-950 border-emerald-700 text-emerald-300 hover:border-emerald-500 hover:bg-emerald-900'
           : 'bg-slate-900 border-slate-800 text-slate-600 line-through hover:border-slate-600'
