@@ -90,6 +90,9 @@ body {
   box-shadow: 0 25px 50px -12px rgba(0,0,0,0.8) !important;
   max-width: 340px !important;
 }
+.driver-popover-arrow {
+  border-color: #1e293b !important;
+}
 .driver-popover-title {
   font-size: 12px !important;
   font-weight: 600 !important;
@@ -164,7 +167,7 @@ body {
   color: #f1f5f9 !important;
 }
 .driver-overlay {
-  background: rgba(0,0,0,0.6) !important;
+  background: rgba(2, 6, 23, 0.45) !important;
 }
 
 /* ReactFlow custom overrides */
