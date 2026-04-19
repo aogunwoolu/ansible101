@@ -24,16 +24,19 @@ import YamlEditor from './components/YamlEditor'
 import FlowCanvas from './components/FlowCanvas'
 import HumanSidebar from './components/HumanSidebar'
 import MockContextPanel from './components/MockContextPanel'
+import PlayVarsPanel from './components/PlayVarsPanel'
 import FileExplorer from './components/FileExplorer'
 import QuickCard from './components/QuickCard'
 import PipelineView from './components/PipelineView'
 import AboutPage from './components/AboutPage'
+import InventoryLab from './components/InventoryLab'
 import { useFileDrop } from './lib/useFileDrop'
+import { startTour } from './lib/tour'
 
 import {
   Share2, AlertCircle, RotateCcw, BookOpen,
   ClipboardPaste, Layers, Zap, FileCode,
-  FlaskConical,
+  FlaskConical, Variable, FlaskRound, HelpCircle,
 } from 'lucide-react'
 
 const MODE_PATHS = {
@@ -41,6 +44,7 @@ const MODE_PATHS = {
   playbook: '/playbook',
   snippet: '/snippet',
   jinja2: '/jinja',
+  limits: '/limits',
   about: '/about',
 }
 
@@ -48,6 +52,7 @@ function getModeFromPath(pathname) {
   if (pathname === '/playbook') return 'playbook'
   if (pathname === '/snippet') return 'snippet'
   if (pathname === '/jinja') return 'jinja2'
+  if (pathname === '/limits') return 'limits'
   if (pathname === '/about' || pathname === '/legal') return 'about'
   return 'landing'
 }
@@ -108,9 +113,10 @@ function useDebounce(value, delay) {
 
 //  Mode meta 
 const MODE_META = {
-  playbook: { label: 'Playbook', Icon: Layers,   color: 'text-cyan-400' },
-  snippet:  { label: 'Snippet',  Icon: FileCode,  color: 'text-blue-400' },
-  jinja2:   { label: 'Jinja2',   Icon: Zap,       color: 'text-violet-400' },
+  playbook: { label: 'Playbook', Icon: Layers,      color: 'text-cyan-400' },
+  snippet:  { label: 'Snippet',  Icon: FileCode,     color: 'text-blue-400' },
+  jinja2:   { label: 'Jinja2',   Icon: Zap,          color: 'text-violet-400' },
+  limits:   { label: 'Limits',   Icon: FlaskRound,   color: 'text-emerald-400' },
 }
 
 export default function App() {
@@ -141,10 +147,18 @@ export default function App() {
   const [highlightLines, setHighlightLines]         = useState(null)
   const [copySuccess, setCopySuccess]               = useState(false)
   const [showMockPanel, setShowMockPanel]           = useState(false)
+  const [showVarsPanel, setShowVarsPanel]           = useState(true)
+  const [userVars, setUserVars]                     = useState({})
 
-  const debouncedYaml  = useDebounce(yamlText, 400)
+  // Debounce each mode's buffer independently — prevents stale cross-mode text
+  // reaching the wrong parser when switching modes.
+  const debouncedPlaybook  = useDebounce(texts.playbook, 400)
+  const debouncedSnippet   = useDebounce(texts.snippet,  400)
+  const debouncedJinja2    = useDebounce(texts.jinja2,   400)
   const debouncedFacts = useDebounce(facts, 300)
   const debouncedExtraFiles = useDebounce(extraFiles, 400)
+  // Merge user-supplied playbook vars on top of ansible facts for rendering
+  const mergedFacts = useMemo(() => ({ ...debouncedFacts, ...userVars }), [debouncedFacts, userVars])
 
   // Build file registry: { filename -> parsed Task[] } from extra YAML files only.
   // Also collect parse errors per file id so the explorer can show indicators.
@@ -178,8 +192,8 @@ export default function App() {
   // (uses replaceState — doesn't add browser history entries)
   useEffect(() => {
     if (mode !== 'playbook') return
-    pushToUrl(debouncedYaml, debouncedFacts, debouncedExtraFiles)
-  }, [mode, debouncedYaml, debouncedFacts, debouncedExtraFiles])
+    pushToUrl(debouncedPlaybook, debouncedFacts, debouncedExtraFiles)
+  }, [mode, debouncedPlaybook, debouncedFacts, debouncedExtraFiles])
 
   useEffect(() => {
     const onPopState = () => {
@@ -219,39 +233,39 @@ export default function App() {
   const { plays, nodes, edges } = useMemo(() => {
     if (mode !== 'playbook') return { plays: [], nodes: [], edges: [] }
     try {
-      const parsed = yaml.load(debouncedYaml)
+      const parsed = yaml.load(debouncedPlaybook)
       setParseError(null)
       if (!parsed) return { plays: [], nodes: [], edges: [] }
       const arr = Array.isArray(parsed) ? parsed : [parsed]
-      const { nodes, edges } = parsePlaybook(arr, debouncedYaml, debouncedFacts, fileRegistry)
+      const { nodes, edges } = parsePlaybook(arr, debouncedPlaybook, mergedFacts, fileRegistry)
       return { plays: arr, nodes, edges }
     } catch (e) {
       setParseError({ message: e.message, line: e.mark?.line ?? 0, column: e.mark?.column ?? 0 })
       return { plays: [], nodes: [], edges: [] }
     }
-  }, [mode, debouncedYaml, debouncedFacts, fileRegistry])
+  }, [mode, debouncedPlaybook, debouncedFacts, fileRegistry])
 
   // Parse snippet task (snippet mode)
   const snippetTask = useMemo(() => {
     if (mode !== 'snippet') return null
     try {
-      const parsed = yaml.load(debouncedYaml)
+      const parsed = yaml.load(debouncedSnippet)
       if (!parsed) return null
       if (Array.isArray(parsed)) return parsed[0] ?? null
       return parsed
     } catch { return null }
-  }, [mode, debouncedYaml])
+  }, [mode, debouncedSnippet])
 
   // Node click
   const handleNodeClick = useCallback((node) => {
     setSelectedNode(node)
     const taskName = node.data?.label
     if (taskName && !taskName.startsWith('[')) {
-      const lines = debouncedYaml.split('\n')
+      const lines = debouncedPlaybook.split('\n')
       const idx = lines.findIndex((l) => l.includes(taskName))
       if (idx !== -1) setHighlightLines({ start: idx + 1, end: idx + 1 })
     }
-  }, [debouncedYaml])
+  }, [debouncedPlaybook])
 
   // Magic Paste — put content into the right buffer
   const handlePasteContent = useCallback((text) => {
@@ -268,6 +282,8 @@ export default function App() {
   // Global Ctrl+V / paste listener
   useEffect(() => {
     const onPaste = (e) => {
+      // Let the Limits page handle its own paste (inventory import)
+      if (mode === 'limits') return
       const target = e.target
       const tag = target?.tagName?.toLowerCase()
       const isEditable = tag === 'textarea' || tag === 'input' ||
@@ -434,15 +450,15 @@ export default function App() {
         </div>
 
         {/* Mode selector */}
-        <div className="flex items-center gap-1 rounded-lg border border-slate-800 p-0.5">
+        <div data-tour="mode-tabs" className="flex items-center gap-1 rounded-lg border border-slate-800 p-0.5">
           {Object.entries(MODE_META).map(([key, meta]) => (
             <button
               key={key}
               onClick={() => handleSetMode(key)}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-mono transition-all
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-mono transition-all duration-200 border
                 ${mode === key
-                  ? `${meta.color} bg-slate-800 border border-slate-700`
-                  : 'text-slate-500 hover:text-slate-300'
+                  ? `${meta.color} bg-slate-800 border-slate-700 shadow-sm`
+                  : 'text-slate-500 border-transparent hover:text-slate-300 hover:bg-slate-800/50'
                 }`}
             >
               <meta.Icon size={11} />
@@ -453,20 +469,35 @@ export default function App() {
 
         <div className="flex items-center gap-2 shrink-0">
           <button
-            onClick={() => handleSetMode('about')}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded border border-slate-700 text-slate-400 hover:border-slate-500 hover:text-white text-xs font-mono transition-all"
+            data-tour="btn-vars"
+            onClick={() => setShowVarsPanel((v) => !v)}
+            title="Toggle Playbook Vars panel"
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded border text-xs font-mono transition-all
+              ${mode !== 'playbook' ? 'invisible pointer-events-none' : ''}
+              ${showVarsPanel && mode === 'playbook'
+                ? 'border-violet-600 text-violet-300 bg-violet-950'
+                : 'border-slate-700 text-slate-500 hover:text-violet-400 hover:border-violet-700'
+              }`}
           >
-            About
+            <Variable size={12} />
+            Vars
           </button>
 
           {parseError && mode === 'playbook' && (
-            <div className="flex items-center gap-1.5 rounded bg-red-950 border border-red-800 px-2 py-1 max-w-[220px]">
+            <div className="flex items-center gap-1.5 rounded bg-red-950 border border-red-800 px-2 py-1 max-w-[220px] animate-fade-in">
               <AlertCircle size={12} className="text-red-400 shrink-0" />
               <span className="text-red-300 text-[10px] font-mono truncate">{parseError?.message}</span>
             </div>
           )}
 
           <button
+            onClick={() => handleSetMode('about')}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded border border-slate-700 text-slate-400 hover:border-slate-500 hover:text-white text-xs font-mono transition-all"
+          >
+            About
+          </button>
+          <button
+            data-tour="btn-facts"
             onClick={() => setShowMockPanel((v) => !v)}
             title="Toggle Mock Facts panel"
             className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded border text-xs font-mono transition-all
@@ -488,6 +519,16 @@ export default function App() {
           </button>
 
           <button
+            onClick={() => startTour(mode)}
+            title="Start walkthrough for this page"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded border border-slate-700 text-slate-400 hover:border-cyan-700 hover:text-cyan-400 text-xs font-mono transition-all"
+          >
+            <HelpCircle size={12} />
+            Tour
+          </button>
+
+          <button
+            data-tour="btn-share"
             onClick={handleShare}
             className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded border text-xs font-mono transition-all
               ${copySuccess
@@ -503,8 +544,12 @@ export default function App() {
 
       {/* Body */}
       <div className="flex flex-1 overflow-hidden">
-        {/* Left pane: editor */}
+        {mode === 'limits' && <InventoryLab />}
+
+        {/* Left pane: editor — hidden in limits mode */}
+        {mode !== 'limits' && (
         <div
+          data-tour="editor-pane"
           {...(mode === 'playbook' ? dropProps : {})}
           className={`relative flex flex-col border-r border-slate-800 overflow-hidden transition-colors
             ${mode === 'playbook' && isDragging ? 'bg-cyan-950/30 border-cyan-700' : ''}
@@ -523,18 +568,20 @@ export default function App() {
           />
           <div className="flex flex-1 overflow-hidden">
             {mode === 'playbook' && (
-              <FileExplorer
-                files={[{ id: 'main', name: 'playbook.yml' }, ...extraFiles]}
-                activeId={activeFileId}
-                onSwitch={setActiveFileId}
-                onAdd={handleAddFile}
-                onAddNamed={handleAddFileNamed}
-                onRemove={handleRemoveFile}
-                onRename={handleRenameFile}
-                onReorder={handleReorderFile}
-                nodes={nodes}
-                fileErrors={fileErrors}
-              />
+              <div data-tour="file-explorer" className="contents">
+                <FileExplorer
+                  files={[{ id: 'main', name: 'playbook.yml' }, ...extraFiles]}
+                  activeId={activeFileId}
+                  onSwitch={setActiveFileId}
+                  onAdd={handleAddFile}
+                  onAddNamed={handleAddFileNamed}
+                  onRemove={handleRemoveFile}
+                  onRename={handleRenameFile}
+                  onReorder={handleReorderFile}
+                  nodes={nodes}
+                  fileErrors={fileErrors}
+                />
+              </div>
             )}
             <div className="flex flex-col flex-1 overflow-hidden">
               <div className="flex-1 overflow-hidden">
@@ -546,17 +593,26 @@ export default function App() {
                   parseError={activeFileError}
                 />
               </div>
+              {showVarsPanel && mode === 'playbook' && (
+                <PlayVarsPanel
+                  yamlText={debouncedPlaybook}
+                  plays={plays}
+                  userVars={userVars}
+                  onUserVarsChange={setUserVars}
+                />
+              )}
               {showMockPanel && (
                 <MockContextPanel facts={facts} onFactsChange={setFacts} />
               )}
             </div>
           </div>
         </div>
+        )} {/* end mode !== 'limits' left pane */}
 
         {/* Right area  mode-specific */}
         {mode === 'playbook' && (
           <>
-            <div className="flex flex-col flex-1 overflow-hidden border-r border-slate-800">
+            <div className="flex flex-col flex-1 overflow-hidden border-r border-slate-800 animate-fade-up" data-tour="flow-pane">
               <PaneHeader label="Execution Flow" color="text-slate-400" />
               <div className="flex-1 overflow-hidden">
                 {nodes.length > 0 ? (
@@ -566,14 +622,14 @@ export default function App() {
                 )}
               </div>
             </div>
-            <div className="flex flex-col w-[26%] min-w-[200px] overflow-hidden">
+            <div className="flex flex-col w-[26%] min-w-[200px] overflow-hidden animate-fade-up" data-tour="human-sidebar" style={{ animationDelay: '40ms' }}>
               <HumanSidebar plays={plays} selectedNode={selectedNode} />
             </div>
           </>
         )}
 
         {mode === 'snippet' && (
-          <div className="flex-1 overflow-hidden">
+          <div className="flex-1 overflow-hidden animate-fade-up" data-tour="snippet-pane">
             {snippetTask
               ? <QuickCard task={snippetTask} facts={facts} />
               : <EmptyQuickCard />
@@ -582,8 +638,8 @@ export default function App() {
         )}
 
         {mode === 'jinja2' && (
-          <div className="flex-1 overflow-hidden">
-            <PipelineView expression={jinja2Text} facts={facts} />
+          <div className="flex-1 overflow-hidden animate-fade-up" data-tour="jinja2-pane">
+            <PipelineView expression={jinja2Text} facts={mergedFacts} />
           </div>
         )}
       </div>
