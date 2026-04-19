@@ -3,13 +3,15 @@
  * Right panel — shows human-readable explanations for the
  * selected node (or all tasks if nothing is selected).
  */
-import React from 'react'
+import React, { useState } from 'react'
 import {
   Package, Terminal, FileCog, Activity, RefreshCw,
   Bell, HelpCircle, AlertTriangle, Info, Zap,
   FileText, Globe, DownloadCloud, Download, Bug,
   Clock, GitMerge, User, Copy, Folder, FolderOpen, FileQuestion,
+  ExternalLink, ChevronDown, ChevronRight, Code2,
 } from 'lucide-react'
+import jsyaml from 'js-yaml'
 import { generateExplanation, generatePlaySummary } from '../lib/humanSpeak'
 
 const ICON_MAP = {
@@ -39,9 +41,24 @@ function LucideIcon({ name, size = 16, className = '' }) {
   return <Icon size={size} className={className} />
 }
 
+function TaskSnippet({ task }) {
+  const yaml = React.useMemo(() => {
+    try {
+      return jsyaml.dump([task], { indent: 2, lineWidth: -1, noRefs: true }).trim()
+    } catch {
+      return null
+    }
+  }, [task])
+  if (!yaml) return null
+  return (
+    <pre className="mt-2 rounded bg-slate-950 border border-slate-700 p-2 text-[10px] font-mono text-slate-400 leading-relaxed overflow-x-auto whitespace-pre">{yaml}</pre>
+  )
+}
+
 function ExplanationCard({ task, isSelected }) {
   if (!task) return null
-  const { text, warning, icon } = generateExplanation(task)
+  const [showSnippet, setShowSnippet] = useState(false)
+  const { text, warning, icon, docUrl } = generateExplanation(task)
 
   return (
     <div
@@ -90,6 +107,29 @@ function ExplanationCard({ task, isSelected }) {
           <p className="text-amber-300 text-xs leading-relaxed">{warning}</p>
         </div>
       )}
+      {/* Bottom row: snippet toggle + docs link */}
+      <div className="mt-2 flex items-center gap-3">
+        <button
+          onClick={() => setShowSnippet(v => !v)}
+          className="inline-flex items-center gap-1 text-[10px] font-mono text-slate-500 hover:text-slate-300 transition-colors"
+        >
+          {showSnippet ? <ChevronDown size={9} /> : <ChevronRight size={9} />}
+          <Code2 size={9} />
+          yaml
+        </button>
+        {docUrl && (
+          <a
+            href={docUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 text-[10px] font-mono text-slate-500 hover:text-cyan-400 transition-colors"
+          >
+            <ExternalLink size={9} />
+            ansible docs
+          </a>
+        )}
+      </div>
+      {showSnippet && <TaskSnippet task={task} />}
     </div>
   )
 }
@@ -117,16 +157,20 @@ export default function HumanSidebar({ plays, selectedNode }) {
         {/* Play summaries */}
         {plays && plays.length > 0 && (
           <div className="mb-4">
-            {plays.map((play, i) => (
-              <div key={i} className="mb-3 rounded border border-blue-800 bg-blue-950 p-3">
-                <div className="text-blue-300 text-xs font-mono font-semibold mb-1">
-                  Play: {play.name || play.hosts || `Play ${i + 1}`}
+            {plays.map((play, i) => {
+              const { stats, summary } = generatePlaySummary(play)
+              return (
+                <div key={i} className="mb-3 rounded border border-blue-800 bg-blue-950 p-3">
+                  <div className="text-blue-300 text-xs font-mono font-semibold mb-1">
+                    Play: {play.name || play.hosts || `Play ${i + 1}`}
+                  </div>
+                  {summary && (
+                    <p className="text-slate-200 text-xs leading-relaxed mb-1">{summary}</p>
+                  )}
+                  <p className="text-slate-400 text-[10px] leading-relaxed">{stats}</p>
                 </div>
-                <p className="text-slate-300 text-xs leading-relaxed">
-                  {generatePlaySummary(play)}
-                </p>
-              </div>
-            ))}
+              )
+            })}
           </div>
         )}
 
