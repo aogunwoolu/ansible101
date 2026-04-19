@@ -17,6 +17,7 @@ import { parsePlaybook } from './lib/parseYamlToFlow'
 import { pushToUrl, loadFromUrl } from './lib/shareUrl'
 import { SAMPLE_YAML } from './lib/sampleYaml'
 import { SAMPLE_JINJA2 } from './lib/sampleJinja2'
+import { SAMPLE_INVENTORY, SAMPLE_HOSTVARS } from './lib/sampleInventory'
 import { DEFAULT_FACTS } from './lib/defaultFacts'
 import { detectContentType } from './lib/detectContentType'
 
@@ -327,6 +328,27 @@ export default function App() {
     setHighlightLines(null)
   }, [])
 
+  const handleLoadInventorySample = useCallback(() => {
+    try {
+      globalThis.localStorage.setItem('ansible101:inventory', JSON.stringify(SAMPLE_INVENTORY))
+      globalThis.localStorage.setItem('ansible101:hostvars', JSON.stringify(SAMPLE_HOSTVARS))
+    } catch {
+      // Best-effort persistence only; continue navigation even if storage is blocked.
+    }
+    updateBrowserPath('limits', 'pushState')
+    setMode('limits')
+    setSelectedNode(null)
+    setHighlightLines(null)
+  }, [])
+
+  const handleStartPlaybookTour = useCallback(() => {
+    updateBrowserPath('playbook', 'pushState')
+    setMode('playbook')
+    setSelectedNode(null)
+    setHighlightLines(null)
+    globalThis.setTimeout(() => startTour('playbook'), 120)
+  }, [])
+
   // Extra file management handlers
   const handleAddFile = useCallback(() => {
     const id = `file-${Date.now()}`
@@ -428,7 +450,16 @@ export default function App() {
   }, [mode, activeFileId, setCurrentText])
 
   if (mode === 'landing') {
-    return <LandingScreen onPaste={handlePasteContent} onLoadSample={handleLoadSample} onOpenAbout={() => handleSetMode('about')} />
+    return (
+      <LandingScreen
+        onPaste={handlePasteContent}
+        onLoadSample={handleLoadSample}
+        onLoadInventorySample={handleLoadInventorySample}
+        onOpenLimits={() => handleSetMode('limits')}
+        onStartPlaybookTour={handleStartPlaybookTour}
+        onOpenAbout={() => handleSetMode('about')}
+      />
+    )
   }
 
   if (mode === 'about') {
@@ -698,7 +729,14 @@ function EmptyQuickCard() {
   )
 }
 
-function LandingScreen({ onPaste, onLoadSample, onOpenAbout }) {
+function LandingScreen({
+  onPaste,
+  onLoadSample,
+  onLoadInventorySample,
+  onOpenLimits,
+  onStartPlaybookTour,
+  onOpenAbout,
+}) {
   const [dragOver, setDragOver] = useState(false)
   const dropRef = useRef(null)
 
@@ -766,29 +804,38 @@ function LandingScreen({ onPaste, onLoadSample, onOpenAbout }) {
           <div className="flex-1 h-px bg-slate-800" />
         </div>
 
-        <button
-          onClick={onLoadSample}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg border border-cyan-800 hover:border-cyan-500 text-cyan-400 hover:text-cyan-300 text-sm font-mono transition-all"
-        >
-          <BookOpen size={14} />
-          Load sample playbook
-        </button>
-      </div>
+        <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+          <button
+            onClick={onLoadSample}
+            className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-cyan-700 bg-cyan-950/40 hover:bg-cyan-950/70 hover:border-cyan-500 text-cyan-300 hover:text-cyan-200 text-sm font-mono transition-all"
+          >
+            <BookOpen size={14} />
+            Load sample playbook
+          </button>
+          <button
+            onClick={onOpenLimits}
+            className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-slate-700 hover:border-slate-500 text-slate-300 hover:text-white text-sm font-mono transition-all"
+          >
+            <FlaskConical size={14} />
+            Open Limits Lab
+          </button>
+        </div>
 
-      <div className="flex gap-4 flex-wrap justify-center">
-        {[
-          { Icon: Layers,   color: 'text-cyan-400',   label: 'Full Playbook', desc: ' 3-pane visualizer' },
-          { Icon: FileCode, color: 'text-blue-400',   label: 'Task Snippet',  desc: ' Quick Card view' },
-          { Icon: Zap,      color: 'text-violet-400', label: 'Jinja2 Expr',   desc: ' Pipeline trace' },
-        ].map(({ Icon, color, label, desc }) => (
-          <div key={label} className="flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-800 bg-slate-900">
-            <Icon size={14} className={color} />
-            <div>
-              <div className={`text-xs font-mono font-semibold ${color}`}>{label}</div>
-              <div className="text-slate-500 text-[10px] font-mono">{desc}</div>
-            </div>
-          </div>
-        ))}
+        <div className="flex flex-wrap items-center justify-center gap-3 text-[11px] font-mono">
+          <button
+            onClick={onLoadInventorySample}
+            className="text-emerald-400 hover:text-emerald-300 transition-colors"
+          >
+            Load demo inventory into Limits
+          </button>
+          <span className="text-slate-700">•</span>
+          <button
+            onClick={onStartPlaybookTour}
+            className="text-cyan-400 hover:text-cyan-300 transition-colors"
+          >
+            Start guided walkthrough
+          </button>
+        </div>
       </div>
 
       <p className="text-slate-600 text-[10px] font-mono text-center max-w-sm">
