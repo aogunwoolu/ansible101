@@ -837,11 +837,19 @@ function loadHostvars() {
   return {}
 }
 
-export default function InventoryLab() {
-  const [inventory, setInventoryRaw] = useState(loadInventory)
-  const [hostvars, setHostvarsRaw]   = useState(loadHostvars)
+export default function InventoryLab({ initialShareState = null, onShareStateChange }) {
+  const [inventory, setInventoryRaw] = useState(() => initialShareState?.inventory ?? loadInventory())
+  const [hostvars, setHostvarsRaw]   = useState(() => initialShareState?.hostvars ?? loadHostvars())
   const [selectedHost, setSelectedHost] = useState(null)
-  const [limit, setLimit] = useState('')
+  const [limit, setLimit] = useState(() => initialShareState?.limit ?? '')
+
+  useEffect(() => {
+    if (!initialShareState) return
+    setInventoryRaw(initialShareState.inventory ?? DEFAULT_INVENTORY)
+    setHostvarsRaw(initialShareState.hostvars ?? {})
+    setLimit(initialShareState.limit ?? '')
+    setSelectedHost(null)
+  }, [initialShareState])
 
   const handleGroupClick = useCallback((g) => {
     setLimit((prev) => prev ? prev + ':' + g : g)
@@ -868,6 +876,10 @@ export default function InventoryLab() {
       return next
     })
   }, [])
+
+  useEffect(() => {
+    onShareStateChange?.({ inventory, hostvars, limit })
+  }, [inventory, hostvars, limit, onShareStateChange])
 
   return (
     <div className="flex flex-1 overflow-hidden animate-fade-up">

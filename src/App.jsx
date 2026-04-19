@@ -37,7 +37,7 @@ import { startTour } from './lib/tour'
 import {
   Share2, AlertCircle, RotateCcw, BookOpen,
   ClipboardPaste, Layers, Zap, FileCode,
-  FlaskConical, Variable, FlaskRound, HelpCircle,
+  FlaskConical, Variable, FlaskRound, HelpCircle, Info,
 } from 'lucide-react'
 
 const MODE_PATHS = {
@@ -150,6 +150,7 @@ export default function App() {
   const [showMockPanel, setShowMockPanel]           = useState(false)
   const [showVarsPanel, setShowVarsPanel]           = useState(true)
   const [userVars, setUserVars]                     = useState({})
+  const [limitsShareState, setLimitsShareState]     = useState(() => urlState?.limits ?? null)
 
   // Debounce each mode's buffer independently — prevents stale cross-mode text
   // reaching the wrong parser when switching modes.
@@ -213,6 +214,7 @@ export default function App() {
       } else {
         setExtraFiles([])
       }
+      setLimitsShareState(nextState?.limits ?? null)
       setActiveFileId('main')
       setSelectedNode(null)
       setHighlightLines(null)
@@ -298,15 +300,43 @@ export default function App() {
     return () => globalThis.removeEventListener('paste', onPaste)
   }, [mode, handlePasteContent])
 
-  // Share — encode current mode's text + extra files
+  // Share — encode current mode state into URL
   const handleShare = useCallback(() => {
     updateBrowserPath(mode)
-    pushToUrl(yamlText, facts, extraFiles)
+    if (mode === 'limits') {
+      const inventory = limitsShareState?.inventory ?? {}
+      const hasInventoryHosts = Object.values(inventory).some((hosts) => Array.isArray(hosts) && hosts.length > 0)
+      const hasHostvars = Object.keys(limitsShareState?.hostvars ?? {}).length > 0
+      const hasLimit = Boolean((limitsShareState?.limit ?? '').trim())
+      if (!hasInventoryHosts && !hasHostvars && !hasLimit) return
+
+      pushToUrl('', facts, [], {
+        mode: 'limits',
+        limits: {
+          inventory,
+          hostvars: limitsShareState?.hostvars ?? {},
+          limit: limitsShareState?.limit ?? '',
+        },
+      })
+    } else {
+      pushToUrl(yamlText, facts, extraFiles)
+    }
     globalThis.navigator.clipboard?.writeText(globalThis.location.href).then(() => {
       setCopySuccess(true)
       setTimeout(() => setCopySuccess(false), 2500)
     })
-  }, [mode, yamlText, facts, extraFiles])
+  }, [mode, yamlText, facts, extraFiles, limitsShareState])
+
+  const canShare = useMemo(() => {
+    if (mode === 'limits') {
+      const inventory = limitsShareState?.inventory ?? {}
+      const hasInventoryHosts = Object.values(inventory).some((hosts) => Array.isArray(hosts) && hosts.length > 0)
+      const hasHostvars = Object.keys(limitsShareState?.hostvars ?? {}).length > 0
+      const hasLimit = Boolean((limitsShareState?.limit ?? '').trim())
+      return hasInventoryHosts || hasHostvars || hasLimit
+    }
+    return Boolean((yamlText ?? '').trim()) || extraFiles.length > 0
+  }, [mode, yamlText, extraFiles.length, limitsShareState])
 
   // Reset
   const handleReset = useCallback(() => {
@@ -558,24 +588,40 @@ export default function App() {
             Tour
           </button>
 
-          <button
-            data-tour="btn-share"
-            onClick={handleShare}
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded border text-xs font-mono transition-all
-              ${copySuccess
-                ? 'border-green-500 text-green-400 bg-green-950'
-                : 'border-cyan-800 hover:border-cyan-500 text-cyan-400 hover:text-cyan-300'
-              }`}
-          >
-            <Share2 size={12} />
-            {copySuccess ? 'Copied!' : 'Share'}
-          </button>
+          {canShare && (
+            <div className="flex items-center gap-1.5">
+              <button
+                data-tour="btn-share"
+                onClick={handleShare}
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded border text-xs font-mono transition-all
+                  ${copySuccess
+                    ? 'border-green-500 text-green-400 bg-green-950'
+                    : 'border-cyan-800 hover:border-cyan-500 text-cyan-400 hover:text-cyan-300'
+                  }`}
+              >
+                <Share2 size={12} />
+                {copySuccess ? 'Copied!' : 'Share'}
+              </button>
+              <span
+                className="inline-flex items-center justify-center text-slate-600 hover:text-slate-400 transition-colors"
+                title="Share stores data in the URL hash only. No server upload is performed."
+                aria-label="Sharing privacy note"
+              >
+                <Info size={12} />
+              </span>
+            </div>
+          )}
         </div>
       </header>
 
       {/* Body */}
       <div className="flex flex-1 overflow-hidden">
-        {mode === 'limits' && <InventoryLab />}
+        {mode === 'limits' && (
+          <InventoryLab
+            initialShareState={limitsShareState}
+            onShareStateChange={setLimitsShareState}
+          />
+        )}
 
         {/* Left pane: editor — hidden in limits mode */}
         {mode !== 'limits' && (

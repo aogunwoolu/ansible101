@@ -10,9 +10,9 @@ import LZString from 'lz-string'
 
 const PREFIX = 'lz:'
 
-export function encodeState(yaml, facts, extraFiles = []) {
+export function encodeState(yaml, facts, extraFiles = [], meta = {}) {
   try {
-    const payload = JSON.stringify({ yaml, facts, extraFiles })
+    const payload = JSON.stringify({ yaml, facts, extraFiles, ...meta })
     return PREFIX + LZString.compressToEncodedURIComponent(payload)
   } catch {
     return ''
@@ -46,8 +46,8 @@ export function decodeYaml(b64) {
 /**
  * Write YAML + facts + extraFiles into window.location.hash (compressed).
  */
-export function pushToUrl(yaml, facts, extraFiles = []) {
-  const encoded = encodeState(yaml, facts, extraFiles)
+export function pushToUrl(yaml, facts, extraFiles = [], meta = {}) {
+  const encoded = encodeState(yaml, facts, extraFiles, meta)
   window.history.replaceState(null, '', `#${encoded}`)
 }
 
