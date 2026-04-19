@@ -70,6 +70,15 @@ Powered by [Nunjucks](https://mozilla.github.io/nunjucks/) with 40+ Ansible filt
 #### 🃏 Snippet Mode
 Paste a single task object. A **Quick-Card** shows the module, intent, flags, loop info, conditional, and any warnings — great for reviewing tasks in code review without spinning up a full playbook.
 
+#### 🧪 Limits Lab Mode
+Build and test inventory targeting logic in a dedicated sandbox:
+
+- Import inventory via paste, drag-and-drop, or file upload (JSON / INI / YAML)
+- Edit groups and host membership visually
+- Test `--limit` expressions with live per-group match breakdown
+- Inspect hostvars directly from matched hosts
+- Share the current Limits Lab state (inventory + hostvars + limit pattern) via URL
+
 ---
 
 ### Human-Speak Sidebar
@@ -92,7 +101,18 @@ An inline JSON panel lets you edit `ansible_facts` and arbitrary variables. Ever
 ---
 
 ### Shareable URLs
-The current code and mock facts are encoded into the URL hash using LZ-string compression. Share a fully-loaded view with a single link — like Regex101, but for Ansible.
+Current app state is encoded into the URL hash using LZ-string compression.
+
+- Playbook/Snippet/Jinja2: shares current text + mock facts (+ extra files where applicable)
+- Limits Lab: shares inventory + hostvars + current `--limit` pattern
+- Share button visibility: hidden when there is nothing meaningful to share
+
+### Privacy Note (Important)
+Sharing is **URL-only** in the browser.
+
+- No share payload is uploaded to any backend server by this app
+- Data is stored in the URL fragment (`#...`) and copied to clipboard when you click Share
+- Anyone with the link can read its encoded content, so avoid sharing sensitive data
 
 ---
 
@@ -151,6 +171,7 @@ src/
 │   ├── FlowNodes.jsx            8 custom node types (play, task, loop, diamond, skip, merge, handler, section)
 │   ├── HumanSidebar.jsx         Right panel — plain-English task explanations
 │   ├── MockContextPanel.jsx     Inline JSON editor for ansible_facts
+│   ├── InventoryLab.jsx          Inventory builder + --limit tester sandbox
 │   ├── PipelineView.jsx         Jinja2 Transformation Trace
 │   └── QuickCard.jsx            Single-task Quick-Card view
 │
