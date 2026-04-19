@@ -108,7 +108,7 @@ export default function FlowCanvas({
             event.stopPropagation()
             setMenuOpen((v) => !v)
           }}
-          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded border border-slate-700 bg-slate-900/95 text-slate-300 hover:border-cyan-700 hover:text-cyan-300 text-xs font-mono transition-all"
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded border border-slate-700 bg-slate-900 text-slate-300 hover:border-cyan-700 hover:text-cyan-300 text-xs font-mono transition-all shadow-lg"
           title="Export diagram"
           aria-haspopup="menu"
           aria-expanded={menuOpen}
@@ -120,7 +120,7 @@ export default function FlowCanvas({
         {menuOpen && (
           <div
             onPointerDown={(event) => event.stopPropagation()}
-            className="absolute right-0 top-full mt-1 w-40 rounded border border-slate-700 bg-slate-950/98 shadow-lg overflow-hidden"
+            className="absolute right-0 top-full mt-1 w-44 rounded border border-slate-700 bg-slate-950 shadow-2xl ring-1 ring-slate-800 overflow-hidden"
             role="menu"
           >
             <button
