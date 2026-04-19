@@ -10,7 +10,7 @@
 /* eslint-disable react/prop-types */
 /* eslint-disable jsx-a11y/no-static-element-interactions */
 import React, {
-  useState, useCallback, useEffect, useMemo, useRef,
+  useState, useCallback, useEffect, useMemo, useRef, Suspense, lazy,
 } from 'react'
 import yaml from 'js-yaml'
 import { parsePlaybook } from './lib/parseYamlToFlow'
@@ -22,8 +22,6 @@ import { SAMPLE_INVENTORY, SAMPLE_HOSTVARS } from './lib/sampleInventory'
 import { DEFAULT_FACTS } from './lib/defaultFacts'
 import { detectContentType } from './lib/detectContentType'
 
-import YamlEditor from './components/YamlEditor'
-import FlowCanvas from './components/FlowCanvas'
 import HumanSidebar from './components/HumanSidebar'
 import MockContextPanel from './components/MockContextPanel'
 import PlayVarsPanel from './components/PlayVarsPanel'
@@ -49,6 +47,9 @@ const MODE_PATHS = {
   limits: '/limits',
   about: '/about',
 }
+
+const YamlEditor = lazy(() => import('./components/YamlEditor'))
+const FlowCanvas = lazy(() => import('./components/FlowCanvas'))
 
 function getModeFromPath(pathname) {
   if (pathname === '/playbook') return 'playbook'
@@ -704,13 +705,15 @@ export default function App() {
             )}
             <div className="flex flex-col flex-1 overflow-visible md:overflow-hidden">
               <div className="h-[42vh] min-h-[280px] shrink-0 overflow-hidden md:flex-1 md:h-auto md:min-h-0">
-                <YamlEditor
-                  value={editorValue}
-                  onChange={handleEditorChange}
-                  highlightLines={activeFileId === 'main' ? highlightLines : null}
-                  language={editorLanguage}
-                  parseError={activeFileError}
-                />
+                <Suspense fallback={<EditorSkeleton />}>
+                  <YamlEditor
+                    value={editorValue}
+                    onChange={handleEditorChange}
+                    highlightLines={activeFileId === 'main' ? highlightLines : null}
+                    language={editorLanguage}
+                    parseError={activeFileError}
+                  />
+                </Suspense>
               </div>
               {showVarsPanel && mode === 'playbook' && (
                 <PlayVarsPanel
@@ -735,13 +738,15 @@ export default function App() {
               <PaneHeader label="Execution Flow" color="text-slate-400" />
               <div className="flex-1 overflow-hidden">
                 {nodes.length > 0 ? (
-                  <FlowCanvas
-                    nodes={nodes}
-                    edges={edges}
-                    onNodeClick={handleNodeClick}
-                    onExportMermaid={handleExportMermaid}
-                    onExportUml={handleExportUml}
-                  />
+                  <Suspense fallback={<FlowSkeleton />}>
+                    <FlowCanvas
+                      nodes={nodes}
+                      edges={edges}
+                      onNodeClick={handleNodeClick}
+                      onExportMermaid={handleExportMermaid}
+                      onExportUml={handleExportUml}
+                    />
+                  </Suspense>
                 ) : (
                   <EmptyFlow parseError={parseError} />
                 )}
@@ -819,6 +824,41 @@ function EmptyQuickCard() {
     <div className="h-full flex flex-col items-center justify-center gap-3 text-slate-700">
       <FileCode size={34} />
       <p className="text-xs font-mono text-center px-8">Paste a task snippet to see its Quick Card.</p>
+    </div>
+  )
+}
+
+function EditorSkeleton() {
+  return (
+    <div className="h-full w-full bg-slate-950 p-4">
+      <div className="h-full rounded border border-slate-800 bg-slate-900/70 p-3 animate-pulse">
+        <div className="h-3 w-24 rounded bg-slate-700 mb-3" />
+        <div className="space-y-2">
+          <div className="h-2.5 w-full rounded bg-slate-800" />
+          <div className="h-2.5 w-[92%] rounded bg-slate-800" />
+          <div className="h-2.5 w-[88%] rounded bg-slate-800" />
+          <div className="h-2.5 w-[95%] rounded bg-slate-800" />
+          <div className="h-2.5 w-[76%] rounded bg-slate-800" />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function FlowSkeleton() {
+  return (
+    <div className="h-full w-full bg-slate-950 p-4">
+      <div className="h-full rounded border border-slate-800 bg-slate-900/70 p-3 animate-pulse">
+        <div className="grid grid-cols-2 gap-3 mb-3">
+          <div className="h-14 rounded bg-slate-800" />
+          <div className="h-14 rounded bg-slate-800" />
+        </div>
+        <div className="grid grid-cols-3 gap-2">
+          <div className="h-12 rounded bg-slate-800" />
+          <div className="h-12 rounded bg-slate-800" />
+          <div className="h-12 rounded bg-slate-800" />
+        </div>
+      </div>
     </div>
   )
 }
