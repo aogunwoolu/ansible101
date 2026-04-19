@@ -8,6 +8,7 @@
  *   Right — Limit tester (pattern input + per-group result breakdown)
  */
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import {
   Server, Users, Plus, Trash2, Filter, X,
   CheckCircle2, XCircle, ChevronRight, AlertTriangle,
@@ -429,6 +430,14 @@ function HostDetailSidebar({ host, hostvars, inventory, onClose, onGroupClick })
   const attrs = hostvars?.[host] ?? {}
   const entries = Object.entries(attrs)
   const [copiedKey, setCopiedKey] = useState(null)
+  const [isMobile, setIsMobile] = useState(() => globalThis.innerWidth < 768)
+
+  useEffect(() => {
+    const mq = globalThis.matchMedia('(max-width: 767px)')
+    const handler = (e) => setIsMobile(e.matches)
+    mq.addEventListener('change', handler)
+    return () => mq.removeEventListener('change', handler)
+  }, [])
 
   const copyValue = useCallback((k, v) => {
     navigator.clipboard?.writeText(String(v))
@@ -444,28 +453,22 @@ function HostDetailSidebar({ host, hostvars, inventory, onClose, onGroupClick })
     [host, inventory]
   )
 
-  return (
+  const content = (
     <>
-      <button
-        aria-label="Close host details"
-        className="fixed inset-0 z-30 bg-black/50 backdrop-blur-[1px] md:hidden"
-        onClick={onClose}
-      />
-      <div className="fixed inset-x-0 bottom-0 z-40 max-h-[65vh] rounded-t-xl border border-slate-800 bg-slate-950 flex flex-col overflow-hidden animate-slide-in-drawer md:static md:inset-auto md:z-auto md:max-h-none md:w-64 md:shrink-0 md:rounded-none md:border-t-0 md:border-l">
-        {/* Header */}
-        <div className="px-4 py-3 border-b border-slate-800 flex items-center gap-2 shrink-0 bg-slate-900">
-          <Server size={13} className="text-emerald-400 shrink-0" />
-          <span className="text-emerald-300 font-mono font-semibold text-xs flex-1 truncate" title={host}>{host}</span>
-          <button
-            onClick={onClose}
-            className="text-slate-500 hover:text-white transition-colors rounded p-0.5 hover:bg-slate-700"
-            title="Close (Esc)"
-          >
-            <X size={13} />
-          </button>
-        </div>
+      {/* Header */}
+      <div className="px-4 py-3 border-b border-slate-800 flex items-center gap-2 shrink-0 bg-slate-900">
+        <Server size={13} className="text-emerald-400 shrink-0" />
+        <span className="text-emerald-300 font-mono font-semibold text-xs flex-1 truncate" title={host}>{host}</span>
+        <button
+          onClick={onClose}
+          className="text-slate-500 hover:text-white transition-colors rounded p-0.5 hover:bg-slate-700"
+          title="Close (Esc)"
+        >
+          <X size={13} />
+        </button>
+      </div>
 
-        <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto">
         {/* Group membership */}
         <div className="px-4 py-3 border-b border-slate-800/60">
           <p className="text-[9px] font-mono text-slate-500 uppercase tracking-widest mb-2">Member of</p>
@@ -477,10 +480,10 @@ function HostDetailSidebar({ host, hostvars, inventory, onClose, onGroupClick })
                 <button
                   key={g}
                   onClick={() => onGroupClick?.(g)}
-                  title={`Add \"${g}\" to limit filter`}
+                  title={`Add "${g}" to limit filter`}
                   className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono
                     bg-slate-900 border border-slate-700 text-slate-300
-                      hover:border-emerald-600 hover:text-emerald-300 hover:bg-emerald-950/30 min-h-[32px] sm:min-h-0
+                    hover:border-emerald-600 hover:text-emerald-300 hover:bg-emerald-950/30 min-h-[32px] sm:min-h-0
                     transition-all cursor-pointer"
                 >
                   <Users size={8} className="text-emerald-500 shrink-0" />
@@ -520,9 +523,32 @@ function HostDetailSidebar({ host, hostvars, inventory, onClose, onGroupClick })
             </div>
           )}
         </div>
-        </div>
       </div>
     </>
+  )
+
+  // Desktop: render inline as a sidebar panel in the flex row
+  if (!isMobile) {
+    return (
+      <div className="w-64 shrink-0 border-l border-slate-800 flex flex-col overflow-hidden">
+        {content}
+      </div>
+    )
+  }
+
+  // Mobile: portal to body so fixed positioning isn't broken by overflow-y-auto ancestors
+  return createPortal(
+    <>
+      <button
+        aria-label="Close host details"
+        className="fixed inset-0 z-30 bg-black/50 backdrop-blur-[1px]"
+        onClick={onClose}
+      />
+      <div className="fixed inset-x-0 bottom-0 z-40 max-h-[65vh] rounded-t-xl border border-slate-800 bg-slate-950 flex flex-col overflow-hidden animate-slide-in-drawer">
+        {content}
+      </div>
+    </>,
+    document.body
   )
 }
 
