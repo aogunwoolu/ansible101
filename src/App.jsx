@@ -24,9 +24,11 @@ import YamlEditor from './components/YamlEditor'
 import FlowCanvas from './components/FlowCanvas'
 import HumanSidebar from './components/HumanSidebar'
 import MockContextPanel from './components/MockContextPanel'
+import FileExplorer from './components/FileExplorer'
 import QuickCard from './components/QuickCard'
 import PipelineView from './components/PipelineView'
 import AboutPage from './components/AboutPage'
+import { useFileDrop } from './lib/useFileDrop'
 
 import {
   Share2, AlertCircle, RotateCcw, BookOpen,
@@ -52,6 +54,25 @@ function getModeFromPath(pathname) {
 
 function getPathForMode(mode) {
   return MODE_PATHS[mode] ?? '/'
+}
+
+// Map file extension to Monaco language id
+function getEditorLanguage(filename) {
+  const ext = filename.slice(filename.lastIndexOf('.') + 1).toLowerCase()
+  const map = {
+    yml: 'yaml', yaml: 'yaml',
+    sh: 'shell', bash: 'shell', zsh: 'shell',
+    py: 'python',
+    js: 'javascript', mjs: 'javascript', cjs: 'javascript',
+    ts: 'typescript',
+    json: 'json',
+    j2: 'handlebars', jinja2: 'handlebars', jinja: 'handlebars',
+    md: 'markdown', markdown: 'markdown',
+    toml: 'ini', ini: 'ini', cfg: 'ini', conf: 'ini',
+    rb: 'ruby',
+    go: 'go',
+  }
+  return map[ext] ?? 'plaintext'
 }
 
 function getContentModeFromState(state) {
@@ -113,6 +134,8 @@ export default function App() {
   const jinja2Text  = texts.jinja2                   // always available for PipelineView
 
   const [facts, setFacts]                           = useState(() => urlState?.facts ?? DEFAULT_FACTS)
+  const [extraFiles, setExtraFiles]                 = useState(() => urlState?.extraFiles ?? [])
+  const [activeFileId, setActiveFileId]             = useState('main')
   const [parseError, setParseError]                 = useState(null)
   const [selectedNode, setSelectedNode]             = useState(null)
   const [highlightLines, setHighlightLines]         = useState(null)
@@ -121,6 +144,27 @@ export default function App() {
 
   const debouncedYaml  = useDebounce(yamlText, 400)
   const debouncedFacts = useDebounce(facts, 300)
+  const debouncedExtraFiles = useDebounce(extraFiles, 400)
+
+  // Build file registry: { filename -> parsed Task[] } from extra YAML files only.
+  // Also collect parse errors per file id so the explorer can show indicators.
+  // Non-YAML files (scripts, etc.) are stored as-is and never parsed.
+  const { fileRegistry, fileErrors } = useMemo(() => {
+    const registry = {}
+    const errors = {}
+    debouncedExtraFiles.forEach((f) => {
+      if (!/\.(ya?ml)$/i.test(f.name)) return  // skip non-YAML files
+      try {
+        const parsed = yaml.load(f.content)
+        if (parsed) {
+          registry[f.name] = Array.isArray(parsed) ? parsed : [parsed]
+        }
+      } catch (e) {
+        errors[f.id] = { message: e.message, line: e.mark?.line ?? 0, column: e.mark?.column ?? 0 }
+      }
+    })
+    return { fileRegistry: registry, fileErrors: errors }
+  }, [debouncedExtraFiles])
 
   useEffect(() => {
     if (mode === 'landing' && globalThis.location.pathname !== '/' && !globalThis.location.hash) {
@@ -129,6 +173,13 @@ export default function App() {
     }
     if (mode !== 'landing') updateBrowserPath(mode)
   }, [mode])
+
+  // Auto-persist state into the URL hash so refresh restores everything
+  // (uses replaceState — doesn't add browser history entries)
+  useEffect(() => {
+    if (mode !== 'playbook') return
+    pushToUrl(debouncedYaml, debouncedFacts, debouncedExtraFiles)
+  }, [mode, debouncedYaml, debouncedFacts, debouncedExtraFiles])
 
   useEffect(() => {
     const onPopState = () => {
@@ -142,6 +193,12 @@ export default function App() {
         }))
       }
       if (nextState?.facts) setFacts(nextState.facts)
+      if (nextState?.extraFiles) {
+        setExtraFiles(nextState.extraFiles)
+      } else {
+        setExtraFiles([])
+      }
+      setActiveFileId('main')
       setSelectedNode(null)
       setHighlightLines(null)
     }
@@ -166,13 +223,13 @@ export default function App() {
       setParseError(null)
       if (!parsed) return { plays: [], nodes: [], edges: [] }
       const arr = Array.isArray(parsed) ? parsed : [parsed]
-      const { nodes, edges } = parsePlaybook(arr, debouncedYaml, debouncedFacts)
+      const { nodes, edges } = parsePlaybook(arr, debouncedYaml, debouncedFacts, fileRegistry)
       return { plays: arr, nodes, edges }
     } catch (e) {
-      setParseError(e.message)
+      setParseError({ message: e.message, line: e.mark?.line ?? 0, column: e.mark?.column ?? 0 })
       return { plays: [], nodes: [], edges: [] }
     }
-  }, [mode, debouncedYaml, debouncedFacts])
+  }, [mode, debouncedYaml, debouncedFacts, fileRegistry])
 
   // Parse snippet task (snippet mode)
   const snippetTask = useMemo(() => {
@@ -224,20 +281,22 @@ export default function App() {
     return () => globalThis.removeEventListener('paste', onPaste)
   }, [mode, handlePasteContent])
 
-  // Share — encode current mode's text
+  // Share — encode current mode's text + extra files
   const handleShare = useCallback(() => {
     updateBrowserPath(mode)
-    pushToUrl(yamlText, facts)
+    pushToUrl(yamlText, facts, extraFiles)
     globalThis.navigator.clipboard?.writeText(globalThis.location.href).then(() => {
       setCopySuccess(true)
       setTimeout(() => setCopySuccess(false), 2500)
     })
-  }, [mode, yamlText, facts])
+  }, [mode, yamlText, facts, extraFiles])
 
   // Reset
   const handleReset = useCallback(() => {
     setTexts({ playbook: SAMPLE_YAML, snippet: '', jinja2: SAMPLE_JINJA2 })
     setFacts(DEFAULT_FACTS)
+    setExtraFiles([])
+    setActiveFileId('main')
     updateBrowserPath('playbook', 'pushState')
     setMode('playbook')
     setSelectedNode(null)
@@ -251,6 +310,106 @@ export default function App() {
     setSelectedNode(null)
     setHighlightLines(null)
   }, [])
+
+  // Extra file management handlers
+  const handleAddFile = useCallback(() => {
+    const id = `file-${Date.now()}`
+    const count = extraFiles.length + 1
+    const newFile = {
+      id,
+      name: `tasks/new-${count}.yml`,
+      content: `# Tasks file — rename tab to match your include_tasks reference\n- name: Example task\n  debug:\n    msg: "Replace with your tasks"\n`,
+    }
+    setExtraFiles((prev) => [...prev, newFile])
+    setActiveFileId(id)
+  }, [extraFiles.length])
+
+  const handleRemoveFile = useCallback((id) => {
+    setExtraFiles((prev) => prev.filter((f) => f.id !== id))
+    setActiveFileId((prev) => (prev === id ? 'main' : prev))
+  }, [])
+
+  const handleRenameFile = useCallback((id, name) => {
+    setExtraFiles((prev) => prev.map((f) => (f.id === id ? { ...f, name } : f)))
+  }, [])
+
+  // Reorder a file by dragging it before another
+  const handleReorderFile = useCallback((dragId, targetId) => {
+    setExtraFiles((prev) => {
+      const from = prev.findIndex((f) => f.id === dragId)
+      const to = prev.findIndex((f) => f.id === targetId)
+      if (from === -1 || to === -1) return prev
+      const next = [...prev]
+      const [item] = next.splice(from, 1)
+      next.splice(to, 0, item)
+      return next
+    })
+  }, [])
+
+  // Quick-add a file with a pre-filled name (from a missing-reference row)
+  const handleAddFileNamed = useCallback((filename) => {
+    const id = `file-${Date.now()}`
+    const isRole = filename.startsWith('roles/')
+    const newFile = {
+      id,
+      name: filename,
+      content: isRole
+        ? `# Role tasks — ${filename}\n- name: Example role task\n  debug:\n    msg: "Replace with your role tasks"\n`
+        : `# Tasks file — ${filename}\n- name: Example task\n  debug:\n    msg: "Replace with your tasks"\n`,
+    }
+    setExtraFiles((prev) => [...prev, newFile])
+    setActiveFileId(id)
+  }, [])
+
+  // Drop files into the editor area (YAML or ZIP → extract YAML)
+  const handleDropFiles = useCallback((dropped) => {
+    const newFiles = dropped.map(({ name, content }) => ({
+      id: `file-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      name,
+      content,
+    }))
+    setExtraFiles((prev) => {
+      // Deduplicate by name — last write wins
+      const map = new Map(prev.map((f) => [f.name, f]))
+      newFiles.forEach((f) => map.set(f.name, f))
+      return Array.from(map.values())
+    })
+    if (newFiles.length > 0) setActiveFileId(newFiles[newFiles.length - 1].id)
+  }, [])
+
+  const { isDragging, dropProps } = useFileDrop(handleDropFiles)
+
+  // Language for the Monaco editor — depends on mode and active file extension
+  const editorLanguage = useMemo(() => {
+    if (mode === 'jinja2') return 'handlebars'
+    if (activeFileId === 'main' || mode !== 'playbook') return 'yaml'
+    const activeFile = extraFiles.find((f) => f.id === activeFileId)
+    return activeFile ? getEditorLanguage(activeFile.name) : 'yaml'
+  }, [mode, activeFileId, extraFiles])
+
+  // Error for the currently active file (used for Monaco squiggle + EmptyFlow)
+  // Only applies to YAML files — non-YAML files never have parse errors shown
+  const activeFileError = useMemo(() => {
+    if (activeFileId === 'main') return parseError
+    const f = extraFiles.find((x) => x.id === activeFileId)
+    if (!f || !/\.(ya?ml)$/i.test(f.name)) return null
+    return fileErrors[activeFileId] ?? null
+  }, [activeFileId, parseError, extraFiles, fileErrors])
+
+  // Value shown in the editor — depends on active tab
+  const editorValue = useMemo(() => {
+    if (mode !== 'playbook') return yamlText
+    if (activeFileId === 'main') return texts.playbook
+    return extraFiles.find((f) => f.id === activeFileId)?.content ?? ''
+  }, [mode, activeFileId, texts.playbook, extraFiles, yamlText])
+
+  const handleEditorChange = useCallback((v) => {
+    if (mode !== 'playbook' || activeFileId === 'main') {
+      setCurrentText(v ?? '')
+    } else {
+      setExtraFiles((prev) => prev.map((f) => (f.id === activeFileId ? { ...f, content: v ?? '' } : f)))
+    }
+  }, [mode, activeFileId, setCurrentText])
 
   if (mode === 'landing') {
     return <LandingScreen onPaste={handlePasteContent} onLoadSample={handleLoadSample} onOpenAbout={() => handleSetMode('about')} />
@@ -303,7 +462,7 @@ export default function App() {
           {parseError && mode === 'playbook' && (
             <div className="flex items-center gap-1.5 rounded bg-red-950 border border-red-800 px-2 py-1 max-w-[220px]">
               <AlertCircle size={12} className="text-red-400 shrink-0" />
-              <span className="text-red-300 text-[10px] font-mono truncate">{parseError}</span>
+              <span className="text-red-300 text-[10px] font-mono truncate">{parseError?.message}</span>
             </div>
           )}
 
@@ -345,23 +504,53 @@ export default function App() {
       {/* Body */}
       <div className="flex flex-1 overflow-hidden">
         {/* Left pane: editor */}
-        <div className={`flex flex-col border-r border-slate-800 overflow-hidden
-          ${mode === 'jinja2' ? 'w-[48%]' : 'w-[30%] min-w-[240px]'}`}>
+        <div
+          {...(mode === 'playbook' ? dropProps : {})}
+          className={`relative flex flex-col border-r border-slate-800 overflow-hidden transition-colors
+            ${mode === 'playbook' && isDragging ? 'bg-cyan-950/30 border-cyan-700' : ''}
+            ${mode === 'jinja2' ? 'w-[48%]' : mode === 'playbook' ? 'w-[35%] min-w-[260px]' : 'w-[30%] min-w-[240px]'}`}>
+          {mode === 'playbook' && isDragging && (
+            <div className="absolute inset-0 z-20 flex flex-col items-center justify-center pointer-events-none gap-2">
+              <div className="rounded-lg border-2 border-dashed border-cyan-500/60 bg-cyan-950/60 px-8 py-6 flex flex-col items-center gap-2">
+                <span className="text-cyan-400 text-xs font-mono">Drop files or ZIP</span>
+                <span className="text-slate-500 text-[10px] font-mono">YAML · scripts · any text file</span>
+              </div>
+            </div>
+          )}
           <PaneHeader
             label={mode === 'jinja2' ? 'Jinja2 Expression' : 'Playbook YAML'}
             color={mode === 'jinja2' ? 'text-violet-400' : 'text-cyan-400'}
           />
-          <div className="flex-1 overflow-hidden">
-            <YamlEditor
-              value={yamlText}
-              onChange={(v) => setCurrentText(v ?? '')}
-              highlightLines={highlightLines}
-              language={mode === 'jinja2' ? 'handlebars' : 'yaml'}
-            />
+          <div className="flex flex-1 overflow-hidden">
+            {mode === 'playbook' && (
+              <FileExplorer
+                files={[{ id: 'main', name: 'playbook.yml' }, ...extraFiles]}
+                activeId={activeFileId}
+                onSwitch={setActiveFileId}
+                onAdd={handleAddFile}
+                onAddNamed={handleAddFileNamed}
+                onRemove={handleRemoveFile}
+                onRename={handleRenameFile}
+                onReorder={handleReorderFile}
+                nodes={nodes}
+                fileErrors={fileErrors}
+              />
+            )}
+            <div className="flex flex-col flex-1 overflow-hidden">
+              <div className="flex-1 overflow-hidden">
+                <YamlEditor
+                  value={editorValue}
+                  onChange={handleEditorChange}
+                  highlightLines={activeFileId === 'main' ? highlightLines : null}
+                  language={editorLanguage}
+                  parseError={activeFileError}
+                />
+              </div>
+              {showMockPanel && (
+                <MockContextPanel facts={facts} onFactsChange={setFacts} />
+              )}
+            </div>
           </div>
-          {showMockPanel && (
-            <MockContextPanel facts={facts} onFactsChange={setFacts} />
-          )}
         </div>
 
         {/* Right area  mode-specific */}
@@ -373,12 +562,12 @@ export default function App() {
                 {nodes.length > 0 ? (
                   <FlowCanvas nodes={nodes} edges={edges} onNodeClick={handleNodeClick} />
                 ) : (
-                  <EmptyFlow hasError={!!parseError} />
+                  <EmptyFlow parseError={parseError} />
                 )}
               </div>
             </div>
             <div className="flex flex-col w-[26%] min-w-[200px] overflow-hidden">
-              <HumanSidebar plays={plays} selectedNodeData={selectedNode?.data} />
+              <HumanSidebar plays={plays} selectedNode={selectedNode} />
             </div>
           </>
         )}
@@ -416,14 +605,30 @@ function PaneHeader({ label, color = 'text-slate-400' }) {
   )
 }
 
-function EmptyFlow({ hasError }) {
+function EmptyFlow({ parseError }) {
+  if (parseError) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center gap-4 px-8">
+        <div className="flex flex-col items-center gap-2">
+          <AlertCircle size={28} className="text-red-500" />
+          <p className="text-red-400 text-[11px] font-mono font-semibold tracking-wider uppercase">YAML Syntax Error</p>
+        </div>
+        <div className="w-full max-w-sm bg-red-950/40 border border-red-900/60 rounded-md p-3 space-y-1.5">
+          <p className="text-red-300 text-[11px] font-mono leading-relaxed break-words">{parseError.message}</p>
+          {parseError.line !== undefined && (
+            <p className="text-red-700 text-[10px] font-mono pt-1 border-t border-red-900/50">
+              Line {parseError.line + 1}, Column {parseError.column + 1}
+            </p>
+          )}
+        </div>
+        <p className="text-slate-600 text-[9px] font-mono">Fix the error in the editor to see the flow</p>
+      </div>
+    )
+  }
   return (
     <div className="h-full flex flex-col items-center justify-center gap-3 text-slate-700">
       <Layers size={34} />
-      {hasError
-        ? <p className="text-red-500 text-xs font-mono text-center px-8">Fix the YAML error to visualize the flow.</p>
-        : <p className="text-xs font-mono text-center px-8">Write a valid Ansible playbook to see the flow.</p>
-      }
+      <p className="text-xs font-mono text-center px-8">Write a valid Ansible playbook to see the flow.</p>
     </div>
   )
 }

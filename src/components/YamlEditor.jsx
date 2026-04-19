@@ -2,6 +2,7 @@
  * YamlEditor.jsx
  * Monaco-powered YAML editor with sync-highlight support.
  */
+/* eslint-disable react/prop-types */
 import React, { useRef, useEffect, useCallback } from 'react'
 import MonacoEditor from '@monaco-editor/react'
 
@@ -37,8 +38,9 @@ function defineCyberTheme(monaco) {
   })
 }
 
-export default function YamlEditor({ value, onChange, highlightLines }) {
+export default function YamlEditor({ value, onChange, highlightLines, language = 'yaml', parseError = null }) {
   const editorRef = useRef(null)
+  const monacoRef = useRef(null)
   const decorationsRef = useRef([])
 
   // Apply line highlights when highlightLines prop changes
@@ -60,8 +62,33 @@ export default function YamlEditor({ value, onChange, highlightLines }) {
     editor.revealLineInCenter(start)
   }, [highlightLines])
 
+  // Apply / clear error squiggles via Monaco model markers
+  useEffect(() => {
+    const editor = editorRef.current
+    const monaco = monacoRef.current
+    if (!editor || !monaco) return
+    const model = editor.getModel()
+    if (!model) return
+
+    if (parseError) {
+      const lineNum = (parseError.line ?? 0) + 1
+      const maxCol = model.getLineMaxColumn(lineNum)
+      monaco.editor.setModelMarkers(model, 'yaml-lint', [{
+        severity: monaco.MarkerSeverity.Error,
+        startLineNumber: lineNum,
+        startColumn: (parseError.column ?? 0) + 1,
+        endLineNumber: lineNum,
+        endColumn: maxCol,
+        message: parseError.message,
+      }])
+    } else {
+      monaco.editor.setModelMarkers(model, 'yaml-lint', [])
+    }
+  }, [parseError])
+
   const handleEditorDidMount = useCallback((editor, monaco) => {
     editorRef.current = editor
+    monacoRef.current = monaco
     defineCyberTheme(monaco)
     monaco.editor.setTheme(CYBER_THEME_NAME)
   }, [])
@@ -70,7 +97,7 @@ export default function YamlEditor({ value, onChange, highlightLines }) {
     <div className="h-full w-full overflow-hidden">
       <MonacoEditor
         height="100%"
-        language="yaml"
+        language={language}
         value={value}
         onChange={onChange}
         onMount={handleEditorDidMount}

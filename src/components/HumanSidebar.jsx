@@ -8,7 +8,7 @@ import {
   Package, Terminal, FileCog, Activity, RefreshCw,
   Bell, HelpCircle, AlertTriangle, Info, Zap,
   FileText, Globe, DownloadCloud, Download, Bug,
-  Clock, GitMerge, User, Copy, Folder,
+  Clock, GitMerge, User, Copy, Folder, FolderOpen, FileQuestion,
 } from 'lucide-react'
 import { generateExplanation, generatePlaySummary } from '../lib/humanSpeak'
 
@@ -94,8 +94,14 @@ function ExplanationCard({ task, isSelected }) {
   )
 }
 
-export default function HumanSidebar({ plays, selectedNodeData }) {
-  const allTasks = plays?.flatMap((p) => p.tasks || []) ?? []
+export default function HumanSidebar({ plays, selectedNode }) {
+  const selectedNodeData = selectedNode?.data
+  const selectedNodeType = selectedNode?.type
+  const allTasks = plays?.flatMap((p) => [
+    ...(p.pre_tasks || []),
+    ...(p.tasks || []),
+    ...(p.post_tasks || []),
+  ]) ?? []
 
   return (
     <aside className="h-full flex flex-col bg-slate-900 border-l border-slate-700">
@@ -125,14 +131,20 @@ export default function HumanSidebar({ plays, selectedNodeData }) {
         )}
 
         {/* Selected node explanation */}
-        {selectedNodeData?.task ? (
+        {selectedNodeType === 'missingFileNode' && (
+          <MissingFileCard filename={selectedNodeData?.label} />
+        )}
+        {selectedNodeType === 'includeNode' && (
+          <IncludeCard filename={selectedNodeData?.label} />
+        )}
+        {selectedNodeType !== 'missingFileNode' && selectedNodeType !== 'includeNode' && selectedNodeData?.task ? (
           <>
             <div className="text-slate-500 text-xs font-mono mb-2 uppercase tracking-wider">
               Selected Task
             </div>
             <ExplanationCard task={selectedNodeData.task} isSelected />
           </>
-        ) : (
+        ) : selectedNodeType !== 'missingFileNode' && selectedNodeType !== 'includeNode' && !selectedNodeData?.task ? (
           <>
             <div className="text-slate-500 text-xs font-mono mb-2 uppercase tracking-wider">
               All Tasks
@@ -146,8 +158,47 @@ export default function HumanSidebar({ plays, selectedNodeData }) {
               <ExplanationCard key={i} task={task} isSelected={false} />
             ))}
           </>
-        )}
+        ) : null}
       </div>
     </aside>
+  )
+}
+
+function MissingFileCard({ filename }) {
+  return (
+    <div className="rounded border-2 border-dashed border-orange-700 bg-orange-950 p-3 mb-3">
+      <div className="flex items-center gap-2 mb-2">
+        <FileQuestion size={14} className="text-orange-400" />
+        <span className="text-orange-300 text-xs font-mono font-semibold uppercase tracking-wide">Unresolved Include</span>
+      </div>
+      <p className="text-slate-300 text-xs leading-relaxed mb-3">
+        This task includes an external file that hasn't been added to the workspace yet.
+      </p>
+      <div className="rounded bg-slate-900 border border-slate-700 px-3 py-2">
+        <div className="text-slate-500 text-[10px] font-mono uppercase tracking-wider mb-1">To expand this node:</div>
+        <ol className="text-slate-300 text-xs space-y-1 list-decimal list-inside">
+          <li>Click <span className="text-cyan-400 font-mono">+ add file</span> above the editor</li>
+          <li>Double-click the new tab and rename it to exactly:</li>
+        </ol>
+        <div className="mt-2 rounded bg-slate-800 border border-orange-800 px-2 py-1.5 font-mono text-orange-300 text-xs break-all select-all">
+          {filename}
+        </div>
+        <p className="text-slate-500 text-[10px] mt-2">Then paste your task list into that file's editor.</p>
+      </div>
+    </div>
+  )
+}
+
+function IncludeCard({ filename }) {
+  return (
+    <div className="rounded border border-teal-700 bg-teal-950 p-3 mb-3">
+      <div className="flex items-center gap-2 mb-1">
+        <FolderOpen size={14} className="text-teal-400" />
+        <span className="text-teal-300 text-xs font-mono font-semibold uppercase tracking-wide">Included File</span>
+      </div>
+      <p className="text-slate-300 text-xs leading-relaxed">
+        Tasks are being loaded from <span className="text-teal-300 font-mono">{filename}</span>. The nodes below this card show the expanded contents.
+      </p>
+    </div>
   )
 }

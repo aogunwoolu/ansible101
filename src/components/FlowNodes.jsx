@@ -6,7 +6,8 @@ import React from 'react'
 import { Handle, Position } from 'reactflow'
 import {
   Package, Terminal, FileCog, Activity, RefreshCw,
-  Bell, Layers, HelpCircle, SkipForward, GitMerge,
+  Bell, Layers, HelpCircle, SkipForward,
+  FolderOpen, FileQuestion,
 } from 'lucide-react'
 
 // ── Module → icon map ────────────────────────────────────────────
@@ -225,8 +226,87 @@ export function HandlerNode({ data, selected }) {
 export function SectionNode({ data }) {
   return (
     <div className="px-4 py-2 rounded border border-slate-600 bg-slate-900 text-slate-400 text-xs font-mono tracking-widest uppercase">
+      <Handle type="target" position={Position.Top} style={handleStyle} />
       <Handle type="source" position={Position.Bottom} style={handleStyle} />
       {data.label}
+    </div>
+  )
+}
+
+// ────────────────────────────────────────────────────────────────
+// Include Node — prominent folder-tab header for a resolved include
+// ────────────────────────────────────────────────────────────────
+export function IncludeNode({ data, selected }) {
+  const parts = data.label ? data.label.split('/') : [data.label]
+  const base = parts.pop()
+  const dir = parts.length ? parts.join('/') + '/' : ''
+  const countLabel = data.taskCount != null
+    ? `${data.taskCount} task${data.taskCount === 1 ? '' : 's'}`
+    : null
+  return (
+    <div
+      className={`w-full rounded-t-lg border-b-0 px-4 py-2.5 font-mono transition-all
+        ${selected
+          ? 'bg-teal-900/60 border-2 border-cyan-400 shadow-[0_0_14px_#22d3ee66]'
+          : 'bg-teal-900/40 border-2 border-teal-600/70'}`}
+    >
+      <Handle type="target" position={Position.Top} style={handleStyle} />
+      <Handle type="source" position={Position.Bottom} style={{ ...handleStyle, bottom: -5 }} />
+      <div className="flex items-center gap-2">
+        <FolderOpen size={14} className="text-teal-400 shrink-0" />
+        <div className="flex flex-col min-w-0">
+          <span className="text-[9px] text-teal-600/80 leading-none truncate">{dir}</span>
+          <span className="text-[12px] text-teal-200 font-semibold tracking-wide truncate" title={data.label}>{base}</span>
+        </div>
+        {countLabel && (
+          <span className="ml-auto shrink-0 text-[8px] font-mono text-teal-700 border border-teal-800 rounded px-1 py-px bg-teal-950/60">
+            {countLabel}
+          </span>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ────────────────────────────────────────────────────────────────
+// Group Background Node — rendered behind included tasks
+// Non-interactive, purely visual grouping container
+// ────────────────────────────────────────────────────────────────
+export function GroupBgNode() {
+  return (
+    <div
+      className="w-full h-full rounded-b-lg border-2 border-t-0 border-teal-700/40 bg-teal-950/20 pointer-events-none"
+      style={{ boxShadow: 'inset 0 0 24px #0d9488088' }}
+    />
+  )
+}
+
+// ────────────────────────────────────────────────────────────────
+// Missing File Node — orange dashed placeholder for unresolved includes
+// ────────────────────────────────────────────────────────────────
+export function MissingFileNode({ data, selected }) {
+  const parts = data.label ? data.label.split('/') : [data.label]
+  const base = parts.pop()
+  const dir = parts.length ? parts.join('/') + '/' : ''
+  return (
+    <div
+      style={{ minWidth: 220 }}
+      className={`px-4 py-2.5 rounded border-2 border-dashed font-mono transition-all
+        ${selected ? 'border-cyan-400 bg-orange-950/60' : 'border-orange-700/70 bg-orange-950/40'}`}
+    >
+      <Handle type="target" position={Position.Top} style={handleStyle} />
+      <Handle type="source" position={Position.Bottom} style={handleStyle} />
+      <div className="flex items-center gap-2">
+        <FileQuestion size={14} className="text-orange-500 shrink-0" />
+        <div className="flex flex-col min-w-0">
+          {dir && <span className="text-[9px] text-orange-700 leading-none truncate">{dir}</span>}
+          <span className="text-[11px] text-orange-300 font-semibold truncate" title={data.label}>{base}</span>
+        </div>
+      </div>
+      <div className="mt-1.5 flex items-center gap-1 text-[9px] text-orange-700">
+        <span className="w-1 h-1 rounded-full bg-orange-600 inline-block" />
+        file not in workspace — add to expand
+      </div>
     </div>
   )
 }
@@ -243,4 +323,7 @@ export const nodeTypes = {
   mergeNode: MergeNode,
   handlerNode: HandlerNode,
   sectionNode: SectionNode,
+  includeNode: IncludeNode,
+  groupBgNode: GroupBgNode,
+  missingFileNode: MissingFileNode,
 }
