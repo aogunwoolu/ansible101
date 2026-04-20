@@ -70,7 +70,7 @@ function ExplanationCard({ task, isSelected }) {
     >
       {/* Task name */}
       {task.name && (
-        <div className="text-cyan-400 text-xs font-mono font-semibold mb-1 truncate">
+        <div className="text-cyan-400 text-xs font-mono font-semibold mb-1 break-words">
           {task.name}
         </div>
       )}
@@ -83,7 +83,7 @@ function ExplanationCard({ task, isSelected }) {
       {task.when && (
         <div className="mt-2 flex items-center gap-1 text-amber-400 text-xs font-mono">
           <Info size={11} />
-          <span>Condition: <span className="text-amber-300">{Array.isArray(task.when) ? task.when.join(' AND ') : task.when}</span></span>
+          <span className="min-w-0 break-all">Condition: <span className="text-amber-300">{Array.isArray(task.when) ? task.when.join(' AND ') : task.when}</span></span>
         </div>
       )}
       {/* Loops */}
@@ -97,7 +97,7 @@ function ExplanationCard({ task, isSelected }) {
       {task.notify && (
         <div className="mt-1 flex items-center gap-1 text-amber-300 text-xs font-mono">
           <Bell size={11} />
-          <span>Notifies: {Array.isArray(task.notify) ? task.notify.join(', ') : task.notify}</span>
+          <span className="min-w-0 break-all">Notifies: {Array.isArray(task.notify) ? task.notify.join(', ') : task.notify}</span>
         </div>
       )}
       {/* Warning */}
@@ -241,7 +241,7 @@ function IncludeCard({ filename }) {
         <span className="text-teal-300 text-xs font-mono font-semibold uppercase tracking-wide">Included File</span>
       </div>
       <p className="text-slate-300 text-xs leading-relaxed">
-        Tasks are being loaded from <span className="text-teal-300 font-mono">{filename}</span>. The nodes below this card show the expanded contents.
+        Tasks are being loaded from <span className="text-teal-300 font-mono break-all">{filename}</span>. The nodes below this card show the expanded contents.
       </p>
     </div>
   )

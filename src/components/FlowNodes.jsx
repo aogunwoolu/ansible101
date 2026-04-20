@@ -77,6 +77,12 @@ export function TaskNode({ data, selected }) {
     >
       <Handle type="target" position={Position.Top} style={handleStyle} />
       <Handle type="source" position={Position.Bottom} style={handleStyle} />
+      <Handle
+        type="source"
+        position={Position.Right}
+        id="notify"
+        style={{ ...handleStyle, background: '#fbbf24', right: -5 }}
+      />
       <div className="flex items-center gap-2">
         <span className={isWarn ? 'text-amber-400' : 'text-cyan-400'}>
           <ModuleIcon module={data.module} size={14} />
@@ -110,6 +116,12 @@ export function LoopNode({ data, selected }) {
     >
       <Handle type="target" position={Position.Top} style={handleStyle} />
       <Handle type="source" position={Position.Bottom} style={handleStyle} />
+      <Handle
+        type="source"
+        position={Position.Right}
+        id="notify"
+        style={{ ...handleStyle, background: '#fbbf24', right: -5 }}
+      />
       <div className="flex items-center gap-2">
         <RefreshCw size={13} className="text-violet-400" />
         <span className="text-xs text-violet-400 font-mono">loop</span>
@@ -210,6 +222,12 @@ export function HandlerNode({ data, selected }) {
         bg-amber-950`}
     >
       <Handle type="target" position={Position.Top} style={handleStyle} />
+      <Handle
+        type="target"
+        position={Position.Left}
+        id="notifyIn"
+        style={{ ...handleStyle, background: '#fbbf24', left: -5 }}
+      />
       <Handle type="source" position={Position.Bottom} style={handleStyle} />
       <div className="flex items-center gap-2">
         <Bell size={12} className="text-amber-400" />

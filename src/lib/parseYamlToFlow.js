@@ -18,6 +18,8 @@ const TASK_HEIGHT = 60
 const DIAMOND_SIZE = 80
 const COL_GAP = 180   // horizontal spacing for True/False branches
 const ROW_GAP = 40    // vertical gap between nodes
+const GROUP_HEADER_HEIGHT = 52
+const GROUP_JOIN_OVERLAP = 3
 
 /**
  * Normalise a task object so Fully-Qualified Collection Name (FQCN) keys
@@ -83,6 +85,32 @@ export function getModuleName(task) {
 
 const GROUP_PAD = 14  // padding around grouped child tasks
 
+function getVisualNodeWidth(node) {
+  if (typeof node?.style?.width === 'number') return node.style.width
+
+  switch (node?.type) {
+    case 'taskNode':
+    case 'loopNode':
+      return 260
+    case 'conditionalNode':
+      return 160
+    case 'skipNode':
+      return 120
+    case 'handlerNode':
+      return 220
+    case 'missingFileNode':
+      return 220
+    case 'includeNode':
+      return TASK_WIDTH + GROUP_PAD * 2
+    case 'sectionNode':
+      return 220
+    case 'mergeNode':
+      return 12
+    default:
+      return TASK_WIDTH
+  }
+}
+
 /**
  * Process a list of tasks, appending nodes/edges.
  * Returns { prevId, globalY } for chaining.
@@ -126,12 +154,22 @@ function processTaskList(tasks, nodes, edges, prevId, globalY, ctx, depth = 0) {
         )
         const childEndY = res.globalY
 
+        const childMinX = tempNodes.length > 0
+          ? Math.min(...tempNodes.map((n) => n.position.x))
+          : X
+        const childMaxX = tempNodes.length > 0
+          ? Math.max(...tempNodes.map((n) => n.position.x + getVisualNodeWidth(n)))
+          : X + groupWidth
+        const bgX = Math.min(X, childMinX - GROUP_PAD)
+        const bgRight = Math.max(X + groupWidth, childMaxX + GROUP_PAD)
+        const bgWidth = Math.max(bgRight - bgX, groupWidth)
+
         // 1. Include header — aligned with regular task nodes
         nodes.push({
           id: incId,
           type: 'includeNode',
-          position: { x: X, y: headerY },
-          style: { width: groupWidth },
+          position: { x: bgX, y: headerY },
+          style: { width: bgWidth },
           data: { label: filename, taskCount: resolvedTasks.length },
         })
         edges.push({ id: `e${prevId}-${incId}`, source: prevId, target: incId })
@@ -141,10 +179,10 @@ function processTaskList(tasks, nodes, edges, prevId, globalY, ctx, depth = 0) {
         nodes.push({
           id: bgId,
           type: 'groupBgNode',
-          position: { x: X, y: headerY + 52 },
+          position: { x: bgX, y: headerY + GROUP_HEADER_HEIGHT - GROUP_JOIN_OVERLAP },
           style: {
-            width: groupWidth,
-            height: Math.max(childEndY - childStartY + GROUP_PAD * 2, 40),
+            width: bgWidth,
+            height: Math.max(childEndY - childStartY + GROUP_PAD * 2 + GROUP_JOIN_OVERLAP, 40),
             zIndex: -1,
             pointerEvents: 'none',
           },
@@ -279,6 +317,7 @@ function processTaskList(tasks, nodes, edges, prevId, globalY, ctx, depth = 0) {
     // ── Notify / Handler dashed edge ────────────────────────────
     if (hasNotify) {
       const notifyList = Array.isArray(task.notify) ? task.notify : [task.notify]
+      const notifySourceHandle = hasWhen ? null : 'notify'
       notifyList.forEach((handlerName) => {
         const hId = nextId()
         nodes.push({
@@ -290,14 +329,12 @@ function processTaskList(tasks, nodes, edges, prevId, globalY, ctx, depth = 0) {
         edges.push({
           id: `e${taskExitId}-handler-${hId}`,
           source: taskExitId,
-          sourceHandle: null,
+          sourceHandle: notifySourceHandle,
           target: hId,
+          targetHandle: 'notifyIn',
           type: 'smoothstep',
           animated: false,
-          style: { strokeDasharray: '6,3', stroke: '#fbbf24', strokeWidth: 1.5 },
-          label: 'notify',
-          labelStyle: { fill: '#fbbf24', fontFamily: 'monospace', fontSize: 10 },
-          zIndex: 10,
+          style: { strokeDasharray: '6,3', stroke: '#fbbf24cc', strokeWidth: 1.2 },
         })
       })
     }
@@ -366,11 +403,21 @@ export function parsePlaybook(plays, rawYaml, facts = {}, fileRegistry = {}) {
         const res = processTaskList(roleTasks, tempNodes, tempEdges, roleId, childStartY, { ...ctx, xOffset: childXOffset }, 1)
         const childEndY = res.globalY
 
+        const childMinX = tempNodes.length > 0
+          ? Math.min(...tempNodes.map((n) => n.position.x))
+          : X_BASE
+        const childMaxX = tempNodes.length > 0
+          ? Math.max(...tempNodes.map((n) => n.position.x + getVisualNodeWidth(n)))
+          : X_BASE + groupWidth
+        const bgX = Math.min(X_BASE, childMinX - GROUP_PAD)
+        const bgRight = Math.max(X_BASE + groupWidth, childMaxX + GROUP_PAD)
+        const bgWidth = Math.max(bgRight - bgX, groupWidth)
+
         nodes.push({
           id: roleId,
           type: 'includeNode',
-          position: { x: X_BASE, y: headerY },
-          style: { width: groupWidth },
+          position: { x: bgX, y: headerY },
+          style: { width: bgWidth },
           data: { label: `role: ${roleName}`, taskCount: roleTasks.length },
         })
         edges.push({ id: `e${prevId}-${roleId}`, source: prevId, target: roleId })
@@ -379,10 +426,10 @@ export function parsePlaybook(plays, rawYaml, facts = {}, fileRegistry = {}) {
         nodes.push({
           id: bgId,
           type: 'groupBgNode',
-          position: { x: X_BASE, y: headerY + 52 },
+          position: { x: bgX, y: headerY + GROUP_HEADER_HEIGHT - GROUP_JOIN_OVERLAP },
           style: {
-            width: groupWidth,
-            height: Math.max(childEndY - childStartY + GROUP_PAD * 2, 40),
+            width: bgWidth,
+            height: Math.max(childEndY - childStartY + GROUP_PAD * 2 + GROUP_JOIN_OVERLAP, 40),
             zIndex: -1,
             pointerEvents: 'none',
           },

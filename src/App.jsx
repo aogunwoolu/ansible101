@@ -104,6 +104,25 @@ function updateBrowserPath(mode, method = 'replaceState') {
   }
 }
 
+function normaliseExtraFiles(files = []) {
+  if (!Array.isArray(files)) return []
+  return files
+    .filter((f) => f && typeof f.name === 'string')
+    .map((f, idx) => ({
+      id: f.id || `url-file-${idx}-${f.name}`,
+      name: f.name,
+      content: typeof f.content === 'string' ? f.content : '',
+    }))
+}
+
+function stableStringify(value) {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value)
+  if (Array.isArray(value)) return `[${value.map((v) => stableStringify(v)).join(',')}]`
+  const keys = Object.keys(value).sort((a, b) => a.localeCompare(b))
+  const entries = keys.map((k) => `${JSON.stringify(k)}:${stableStringify(value[k])}`)
+  return '{' + entries.join(',') + '}'
+}
+
 //  Debounce helper 
 function useDebounce(value, delay) {
   const [debounced, setDebounced] = useState(value)
@@ -144,7 +163,7 @@ export default function App() {
   const jinja2Text  = texts.jinja2                   // always available for PipelineView
 
   const [facts, setFacts]                           = useState(() => urlState?.facts ?? DEFAULT_FACTS)
-  const [extraFiles, setExtraFiles]                 = useState(() => urlState?.extraFiles ?? [])
+  const [extraFiles, setExtraFiles]                 = useState(() => normaliseExtraFiles(urlState?.extraFiles))
   const [activeFileId, setActiveFileId]             = useState('main')
   const [parseError, setParseError]                 = useState(null)
   const [selectedNode, setSelectedNode]             = useState(null)
@@ -154,6 +173,26 @@ export default function App() {
   const [showVarsPanel, setShowVarsPanel]           = useState(true)
   const [userVars, setUserVars]                     = useState({})
   const [limitsShareState, setLimitsShareState]     = useState(() => urlState?.limits ?? null)
+
+  // Ensure URL state is fully applied after first mount.
+  // This avoids rare cases where initial render falls back to defaults
+  // and only reparses after the user edits content.
+  useEffect(() => {
+    if (!urlState) return
+
+    const hydratedMode = getModeFromLocation(urlState)
+    setMode(hydratedMode)
+
+    if (urlState.yaml) {
+      const targetMode = hydratedMode === 'landing' ? getContentModeFromState(urlState) : hydratedMode
+      setTexts((prev) => ({ ...prev, [targetMode]: urlState.yaml }))
+    }
+
+    if (urlState.facts) setFacts(urlState.facts)
+    setExtraFiles(normaliseExtraFiles(urlState.extraFiles))
+    setLimitsShareState(urlState?.limits ?? null)
+    setActiveFileId('main')
+  }, [urlState])
 
   useEffect(() => {
     const onResize = () => setIsMobile(globalThis.innerWidth < 768)
@@ -167,6 +206,10 @@ export default function App() {
   const debouncedSnippet   = useDebounce(texts.snippet,  400)
   const debouncedFacts = useDebounce(facts, 300)
   const debouncedExtraFiles = useDebounce(extraFiles, 400)
+  const debouncedFactsForUrl = useMemo(
+    () => (stableStringify(debouncedFacts) === stableStringify(DEFAULT_FACTS) ? null : debouncedFacts),
+    [debouncedFacts]
+  )
   // Merge user-supplied playbook vars on top of ansible facts for rendering
   const mergedFacts = useMemo(() => ({ ...debouncedFacts, ...userVars }), [debouncedFacts, userVars])
 
@@ -202,8 +245,8 @@ export default function App() {
   // (uses replaceState — doesn't add browser history entries)
   useEffect(() => {
     if (mode !== 'playbook') return
-    pushToUrl(debouncedPlaybook, debouncedFacts, debouncedExtraFiles)
-  }, [mode, debouncedPlaybook, debouncedFacts, debouncedExtraFiles])
+    pushToUrl(debouncedPlaybook, debouncedFactsForUrl, debouncedExtraFiles)
+  }, [mode, debouncedPlaybook, debouncedFactsForUrl, debouncedExtraFiles])
 
   useEffect(() => {
     const onPopState = () => {
@@ -218,7 +261,7 @@ export default function App() {
       }
       if (nextState?.facts) setFacts(nextState.facts)
       if (nextState?.extraFiles) {
-        setExtraFiles(nextState.extraFiles)
+        setExtraFiles(normaliseExtraFiles(nextState.extraFiles))
       } else {
         setExtraFiles([])
       }
@@ -318,7 +361,7 @@ export default function App() {
       const hasLimit = Boolean((limitsShareState?.limit ?? '').trim())
       if (!hasInventoryHosts && !hasHostvars && !hasLimit) return
 
-      pushToUrl('', facts, [], {
+      pushToUrl('', null, [], {
         mode: 'limits',
         limits: {
           inventory,
@@ -327,7 +370,8 @@ export default function App() {
         },
       })
     } else {
-      pushToUrl(yamlText, facts, extraFiles)
+      const factsForUrl = stableStringify(facts) === stableStringify(DEFAULT_FACTS) ? null : facts
+      pushToUrl(yamlText, factsForUrl, extraFiles)
     }
     globalThis.navigator.clipboard?.writeText(globalThis.location.href).then(() => {
       setCopySuccess(true)
