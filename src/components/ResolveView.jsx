@@ -13,7 +13,7 @@ import React, { useState, useMemo, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import {
   FolderInput, Server, Layers, Users, Filter, Variable,
-  ArrowRightLeft, Zap, AlertTriangle, ChevronRight, X,
+  ArrowRightLeft, Zap, AlertTriangle, ChevronRight, X, ExternalLink,
 } from 'lucide-react'
 import { buildProjectModel, parseYamlSafe } from '../lib/projectModel'
 import { parseInventoryText } from '../lib/parseInventory'
@@ -484,8 +484,17 @@ function StackBody({ selectedVar, selInfo, renderCtx, hideHeader = false }) {
           <span className="text-[12px] font-mono font-semibold text-cyan-300 break-all">{selectedVar}</span>
         </div>
       )}
-      <p className="text-[9px] font-mono uppercase tracking-widest text-slate-600 mb-2">
-        precedence stack — {selInfo.stack.length} candidate{selInfo.stack.length !== 1 ? 's' : ''} (winner on top)
+      <p className="text-[9px] font-mono uppercase tracking-widest text-slate-600 mb-2 flex items-center gap-1.5">
+        <span>precedence stack — {selInfo.stack.length} candidate{selInfo.stack.length !== 1 ? 's' : ''} (winner on top)</span>
+        <a
+          href="https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_variables.html#variable-precedence-where-should-i-put-a-variable"
+          target="_blank"
+          rel="noopener noreferrer"
+          title="Official Ansible docs: variable precedence order"
+          className="text-slate-600 hover:text-cyan-400 shrink-0"
+        >
+          <ExternalLink size={10} />
+        </a>
       </p>
       <div className="flex flex-col gap-1.5">
         {[...selInfo.stack].reverse().map((s, i) => {
