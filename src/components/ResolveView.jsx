@@ -274,22 +274,24 @@ export default function ResolveView({ mainPlaybook = '', mainName = 'playbook.ym
           </div>
         )}
         <div className="flex flex-wrap items-center gap-2">
-          {invCandidates.length > 0 ? (
-            <Select icon={Server} value={invPath} onChange={setInvPath}
-              options={invCandidates} getValue={(o) => o.path} getLabel={(o) => o.path} />
-          ) : (
-            <span className="flex items-center gap-1.5 rounded border border-slate-800 bg-slate-900 px-2 py-1 text-[11px] font-mono text-slate-500">
-              <Server size={12} /> synthetic inventory
-            </span>
-          )}
-          <Select icon={Layers} value={pbPath} onChange={setPbPath}
-            options={pbCandidates} getValue={(o) => o.path} getLabel={(o) => o.path}
-            placeholder={pbCandidates.length ? 'inventory only' : 'no playbook found'} />
-          <Select icon={Server} value={host} onChange={setHost} options={hosts}
-            placeholder={hosts.length ? undefined : 'no hosts'} />
+          <div data-tour="resolver-pickers" className="flex flex-wrap items-center gap-2">
+            {invCandidates.length > 0 ? (
+              <Select icon={Server} value={invPath} onChange={setInvPath}
+                options={invCandidates} getValue={(o) => o.path} getLabel={(o) => o.path} />
+            ) : (
+              <span className="flex items-center gap-1.5 rounded border border-slate-800 bg-slate-900 px-2 py-1 text-[11px] font-mono text-slate-500">
+                <Server size={12} /> synthetic inventory
+              </span>
+            )}
+            <Select icon={Layers} value={pbPath} onChange={setPbPath}
+              options={pbCandidates} getValue={(o) => o.path} getLabel={(o) => o.path}
+              placeholder={pbCandidates.length ? 'inventory only' : 'no playbook found'} />
+            <Select icon={Server} value={host} onChange={setHost} options={hosts}
+              placeholder={hosts.length ? undefined : 'no hosts'} />
+          </div>
           <div className="flex-1" />
           {resolution && (
-            <>
+            <div data-tour="resolver-actions" className="flex items-center gap-2">
               <button
                 onClick={() => onUseInFlow?.(handoffContext())}
                 title="Load this host's resolved vars into the Flow view"
@@ -304,13 +306,13 @@ export default function ResolveView({ mainPlaybook = '', mainName = 'playbook.ym
               >
                 <Zap size={12} /> Jinja2
               </button>
-            </>
+            </div>
           )}
         </div>
 
         {/* host group membership */}
         {resolution && (
-          <div className="flex flex-wrap items-center gap-1.5">
+          <div data-tour="resolver-groups" className="flex flex-wrap items-center gap-1.5">
             <Users size={11} className="text-emerald-500" />
             <span className="text-[10px] font-mono text-slate-500">groups:</span>
             {resolution.hostGroups.length === 0 && <span className="text-[10px] font-mono text-slate-600 italic">all only</span>}
@@ -329,7 +331,7 @@ export default function ResolveView({ mainPlaybook = '', mainName = 'playbook.ym
         )}
 
         {/* filters */}
-        <div className="flex flex-wrap items-center gap-2">
+        <div data-tour="resolver-filters" className="flex flex-wrap items-center gap-2">
           <label className="flex items-center gap-1.5 rounded border border-slate-700 bg-slate-900 px-2 py-1 flex-1 min-w-[140px]">
             <Filter size={12} className="text-slate-500 shrink-0" />
             <input
@@ -349,25 +351,31 @@ export default function ResolveView({ mainPlaybook = '', mainName = 'playbook.ym
           </label>
         </div>
 
-        {/* extra vars + runtime mocks */}
-        <ExtraVarsPanel
-          candidateFiles={varsFileCandidates}
-          picked={picked}
-          onTogglePick={togglePick}
-          pairs={pairs}
-          onPairsChange={setPairs}
-          defaultCollapsed={isMobile}
-        />
-        <RuntimeMocksPanel runtimeVars={runtimeVars} mocks={mocks} onMockChange={onMockChange} defaultCollapsed={isMobile} />
-        {onFactsChange && (
-          <MockContextPanel facts={facts} onFactsChange={onFactsChange} defaultCollapsed />
-        )}
+        {/* extra vars */}
+        <div data-tour="resolver-extravars">
+          <ExtraVarsPanel
+            candidateFiles={varsFileCandidates}
+            picked={picked}
+            onTogglePick={togglePick}
+            pairs={pairs}
+            onPairsChange={setPairs}
+            defaultCollapsed={isMobile}
+          />
+        </div>
+
+        {/* runtime mocks + mock facts */}
+        <div data-tour="resolver-mocks">
+          <RuntimeMocksPanel runtimeVars={runtimeVars} mocks={mocks} onMockChange={onMockChange} defaultCollapsed={isMobile} />
+          {onFactsChange && (
+            <MockContextPanel facts={facts} onFactsChange={onFactsChange} defaultCollapsed />
+          )}
+        </div>
       </div>
 
       {/* Body: table (+ desktop stack panel; mobile uses a bottom drawer) */}
       <div className="flex flex-1 min-h-0 overflow-hidden">
         {/* Var table */}
-        <div className="flex-1 min-w-0 overflow-auto">
+        <div className="flex-1 min-w-0 overflow-auto" data-tour="resolver-table">
           {!host ? (
             <div className="h-full flex items-center justify-center text-slate-600 text-xs font-mono px-6 text-center">
               No hosts in this inventory.
@@ -434,7 +442,7 @@ export default function ResolveView({ mainPlaybook = '', mainName = 'playbook.ym
 
         {/* Precedence stack — desktop side panel */}
         {!isMobile && (
-          <div className="w-[40%] min-w-[280px] shrink-0 border-l border-slate-800 overflow-y-auto bg-slate-950">
+          <div data-tour="resolver-stack" className="w-[40%] min-w-[280px] shrink-0 border-l border-slate-800 overflow-y-auto bg-slate-950">
             {!selInfo ? (
               <div className="h-full flex flex-col items-center justify-center gap-2 text-slate-700 px-6 text-center">
                 <Variable size={26} />

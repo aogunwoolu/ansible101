@@ -612,8 +612,11 @@ export default function App() {
     setMode('playbook')
     setSelectedNode(null)
     setHighlightLines(null)
-    globalThis.setTimeout(() => startTour('playbook'), 120)
-  }, [])
+    globalThis.setTimeout(() => startTour('playbook', {
+      switchToResolve: () => handleSelectView('resolve'),
+      selectFirstVar: () => document.querySelector('[data-tour="resolver-table"] tbody tr')?.click(),
+    }), 120)
+  }, [handleSelectView])
 
   // Extra file management handlers
   const handleAddFile = useCallback(() => {
@@ -849,7 +852,10 @@ export default function App() {
               </button>
 
               <button
-                onClick={() => startTour(mode)}
+                onClick={() => startTour(mode, {
+                  switchToResolve: () => handleSelectView('resolve'),
+                  selectFirstVar: () => document.querySelector('[data-tour="resolver-table"] tbody tr')?.click(),
+                })}
                 title="Start walkthrough for this page"
                 className="flex items-center gap-1.5 px-2.5 py-2 min-h-[40px] rounded border border-slate-700 text-slate-400 hover:border-cyan-700 hover:text-cyan-400 text-xs font-mono transition-all lg:min-h-0 lg:py-1.5"
               >
