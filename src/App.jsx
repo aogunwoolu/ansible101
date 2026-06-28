@@ -31,6 +31,7 @@ import PipelineView from './components/PipelineView'
 import AboutPage from './components/AboutPage'
 import InventoryLab from './components/InventoryLab'
 import ResolveView from './components/ResolveView'
+import ResizeHandle from './components/ResizeHandle'
 import { useFileDrop, readDataTransferFiles } from './lib/useFileDrop'
 import { isProject, buildProjectModel } from './lib/projectModel'
 import { parseInventoryText } from './lib/parseInventory'
@@ -137,7 +138,25 @@ function useDebounce(value, delay) {
   return debounced
 }
 
-//  Mode meta 
+//  Playbook pane widths (resizable, desktop/tablet only)
+const PANE_WIDTHS_KEY = 'ansible101:paneWidths'
+const EDITOR_WIDTH_DEFAULT = 35
+const EDITOR_WIDTH_MIN = 22
+const EDITOR_WIDTH_MAX = 55
+const SIDEBAR_WIDTH_DEFAULT = 26
+const SIDEBAR_WIDTH_MIN = 16
+const SIDEBAR_WIDTH_MAX = 42
+
+function loadPaneWidths() {
+  try {
+    const raw = globalThis.localStorage.getItem(PANE_WIDTHS_KEY)
+    return raw ? JSON.parse(raw) : {}
+  } catch {
+    return {}
+  }
+}
+
+//  Mode meta
 const MODE_META = {
   playbook: { label: 'Playbook', Icon: Layers,      color: 'text-cyan-400' },
   snippet:  { label: 'Snippet',  Icon: FileCode,     color: 'text-blue-400' },
@@ -182,6 +201,20 @@ export default function App() {
   const userPickedView                              = useRef(false)
   const [actionsMenuOpen, setActionsMenuOpen]       = useState(false)    // mobile/tablet "⋯" actions menu
   const actionsMenuRef                              = useRef(null)
+
+  // Resizable playbook panes (Editor | Flow | Human sidebar) — desktop/tablet only
+  const [editorWidthPct, setEditorWidthPct]   = useState(() => loadPaneWidths().editor ?? EDITOR_WIDTH_DEFAULT)
+  const [sidebarWidthPct, setSidebarWidthPct] = useState(() => loadPaneWidths().sidebar ?? SIDEBAR_WIDTH_DEFAULT)
+  const bodyRowRef = useRef(null)
+  const flowRowRef = useRef(null)
+
+  useEffect(() => {
+    try {
+      globalThis.localStorage.setItem(PANE_WIDTHS_KEY, JSON.stringify({ editor: editorWidthPct, sidebar: sidebarWidthPct }))
+    } catch {
+      // Best-effort persistence only.
+    }
+  }, [editorWidthPct, sidebarWidthPct])
 
   // Close the mobile actions menu on outside click
   useEffect(() => {
@@ -857,7 +890,7 @@ export default function App() {
       </header>
 
       {/* Body */}
-      <div className="flex flex-1 flex-col overflow-y-auto md:flex-row md:overflow-hidden">
+      <div ref={bodyRowRef} className="flex flex-1 flex-col overflow-y-auto md:flex-row md:overflow-hidden">
         {mode === 'limits' && (
           <InventoryLab
             initialShareState={limitsShareState}
@@ -870,12 +903,13 @@ export default function App() {
         <div
           data-tour="editor-pane"
           {...(mode === 'playbook' ? dropProps : {})}
+          style={mode === 'playbook' && !isMobile ? { width: `${editorWidthPct}%` } : undefined}
           className={`relative shrink-0 flex flex-col border-b border-slate-800 md:border-b-0 md:border-r overflow-visible md:overflow-hidden transition-colors
             ${mode === 'playbook' && isDragging ? 'bg-cyan-950/30 border-cyan-700' : ''}
             ${mode === 'jinja2'
               ? 'w-full h-[45vh] md:h-auto md:w-[48%]'
               : mode === 'playbook'
-                ? 'w-full h-auto md:h-auto md:w-[35%] md:min-w-[260px]'
+                ? 'w-full h-auto md:h-auto md:min-w-[260px]'
                 : 'w-full h-[42vh] md:h-auto md:w-[30%] md:min-w-[240px]'
             }`}>
           {mode === 'playbook' && isDragging && (
@@ -936,6 +970,17 @@ export default function App() {
         </div>
         )} {/* end mode !== 'limits' left pane */}
 
+        {mode === 'playbook' && (
+          <ResizeHandle
+            containerRef={bodyRowRef}
+            value={editorWidthPct}
+            min={EDITOR_WIDTH_MIN}
+            max={EDITOR_WIDTH_MAX}
+            onChange={setEditorWidthPct}
+            label="Resize editor and flow panels"
+          />
+        )}
+
         {/* Right region — a Flow/Resolve tab bar swaps just this region's content */}
         {mode === 'playbook' && (
           <div className="flex w-full flex-col overflow-hidden md:flex-1 md:min-h-0">
@@ -961,8 +1006,8 @@ export default function App() {
 
             {/* Content */}
             {viewMode === 'flow' ? (
-              <div className="flex w-full flex-col overflow-hidden md:flex-1 md:flex-row md:min-h-0">
-                <div className="flex shrink-0 flex-col w-full h-[55vh] overflow-hidden border-b border-slate-800 animate-fade-up md:h-auto md:min-h-0 md:flex-1 md:border-b-0 md:border-r" data-tour="flow-pane">
+              <div ref={flowRowRef} className="flex w-full flex-col overflow-hidden md:flex-1 md:flex-row md:min-h-0">
+                <div className="flex shrink-0 flex-col w-full h-[55vh] overflow-hidden border-b border-slate-800 animate-fade-up md:h-auto md:min-h-0 md:flex-1 md:border-b-0" data-tour="flow-pane">
                   <div className="flex-1 overflow-hidden">
                     {nodes.length > 0 ? (
                       <Suspense fallback={<FlowSkeleton />}>
@@ -979,7 +1024,20 @@ export default function App() {
                     )}
                   </div>
                 </div>
-                <div className="flex shrink-0 flex-col w-full h-[38vh] overflow-hidden animate-fade-up md:h-auto md:w-[26%] md:min-w-[200px] md:min-h-0" data-tour="human-sidebar" style={{ animationDelay: '40ms' }}>
+                <ResizeHandle
+                  containerRef={flowRowRef}
+                  value={sidebarWidthPct}
+                  min={SIDEBAR_WIDTH_MIN}
+                  max={SIDEBAR_WIDTH_MAX}
+                  onChange={setSidebarWidthPct}
+                  label="Resize flow and sidebar panels"
+                  reverse
+                />
+                <div
+                  className="flex shrink-0 flex-col w-full h-[38vh] overflow-hidden border-l-0 border-slate-800 animate-fade-up md:h-auto md:min-h-0 md:border-l"
+                  style={{ animationDelay: '40ms', ...(!isMobile ? { width: `${sidebarWidthPct}%`, minWidth: '180px' } : {}) }}
+                  data-tour="human-sidebar"
+                >
                   <HumanSidebar plays={plays} selectedNode={selectedNode} />
                 </div>
               </div>
