@@ -7,10 +7,10 @@ import React, { useState, useCallback } from 'react'
 import { Database, RefreshCw, AlertCircle, ChevronDown, ChevronRight } from 'lucide-react'
 import { DEFAULT_FACTS } from '../lib/defaultFacts'
 
-export default function MockContextPanel({ facts, onFactsChange }) {
+export default function MockContextPanel({ facts, onFactsChange, defaultCollapsed = false }) {
   const [jsonText, setJsonText] = useState(() => JSON.stringify(facts, null, 2))
   const [jsonError, setJsonError] = useState(null)
-  const [collapsed, setCollapsed] = useState(false)
+  const [collapsed, setCollapsed] = useState(defaultCollapsed)
 
   const handleChange = useCallback((text) => {
     setJsonText(text)

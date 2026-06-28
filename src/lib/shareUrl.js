@@ -1,9 +1,16 @@
 /**
  * shareUrl.js
- * Encode/decode app state (YAML + mock facts) to/from URL hash
- * using LZ-string compression for compact, shareable URLs.
+ * Persistence + sharing for app state (YAML + mock facts + project files).
  *
- * Hash formats:
+ * Two concerns, deliberately decoupled so the address bar stays clean:
+ *   - PERSISTENCE: `persistState` auto-saves to localStorage on every edit.
+ *     Nothing is written to the URL, so the address bar isn't cluttered with a
+ *     giant hash while you work. `loadFromUrl` restores it on the next visit.
+ *   - SHARING: `buildShareUrl` encodes the state into a `#d:` link *on demand*
+ *     (when the user clicks Share) and returns the string to copy. The encoded
+ *     hash only ever appears in a deliberately-shared URL, never during editing.
+ *
+ * Encoded share-hash formats (decoded on load for back-compat):
  *   - v3 (default): #d:<base64url(deflate(json-compact))>
  *   - v2: #z:<base64url(lz-uint8(json-compact))>
  *   - v1: #lz:<lz-uri-encoded-json>
@@ -178,20 +185,63 @@ export function decodeYaml(b64) {
   try { return base64ToUtf8(b64) } catch { return null }
 }
 
+const LS_PROJECT = 'ansible101:project'
+const LS_PREFIX = 'ls'
+// A share link must carry all of its state in the URL (no server). Past this
+// length browsers/servers start truncating, so we refuse to build a link and
+// tell the user instead. (Persistence isn't affected — that uses localStorage.)
+const MAX_HASH = 14000
+
 /**
- * Write YAML + facts + extraFiles into window.location.hash (compressed).
+ * Auto-save state to this browser's localStorage. Does NOT touch the URL, so
+ * the address bar stays clean while editing. Restored by `loadFromUrl`.
  */
-export function pushToUrl(yaml, facts, extraFiles = [], meta = {}) {
-  const encoded = encodeState(yaml, facts, extraFiles, meta)
-  globalThis.history.replaceState(null, '', `#${encoded}`)
+export function persistState(yaml, facts, extraFiles = [], meta = {}) {
+  try {
+    const payload = JSON.stringify(compactState(yaml, facts, extraFiles, meta))
+    globalThis.localStorage.setItem(LS_PROJECT, payload)
+  } catch { /* storage blocked — state stays in memory only */ }
 }
 
 /**
- * Read state from URL hash on page load.
- * Returns { yaml, facts } or null.
+ * Build a shareable absolute URL with the state encoded in the hash, for the
+ * user to copy. Pure — does not mutate window.location.
+ * Returns { url, tooLong }. When the encoded state can't fit in a practical
+ * link, `url` is '' and `tooLong` is true.
+ */
+export function buildShareUrl(yaml, facts, extraFiles = [], meta = {}) {
+  const encoded = encodeState(yaml, facts, extraFiles, meta)
+  if (!encoded || `#${encoded}`.length > MAX_HASH) return { url: '', tooLong: true }
+  const { origin, pathname } = globalThis.location
+  return { url: `${origin}${pathname}#${encoded}`, tooLong: false }
+}
+
+function loadLocal() {
+  try {
+    const payload = globalThis.localStorage.getItem(LS_PROJECT)
+    if (payload) return expandState(JSON.parse(payload))
+  } catch { /* ignore */ }
+  return null
+}
+
+/**
+ * Resolve the state to hydrate on page load.
+ *   1. If the URL carries an encoded share hash, decode it (someone opened a
+ *      shared link). The result is flagged `fromHash` so the caller can strip
+ *      the hash from the address bar and mirror it into localStorage.
+ *   2. Otherwise restore the last local session from localStorage — except on
+ *      the bare landing route ('/'), so first-time visitors still see the
+ *      landing screen rather than being dropped into a previous session.
+ * Returns { yaml, facts, extraFiles, …, fromHash? } or null.
  */
 export function loadFromUrl() {
   const hash = globalThis.location.hash.slice(1)
-  if (!hash) return null
-  return decodeState(hash)
+  if (hash && hash !== LS_PREFIX) {
+    const decoded = decodeState(hash)
+    if (decoded) return { ...decoded, fromHash: true }
+  }
+  if (globalThis.location.pathname !== '/' || hash === LS_PREFIX) {
+    return loadLocal()
+  }
+  return null
 }

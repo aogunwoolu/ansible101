@@ -14,9 +14,9 @@ import React, {
 } from 'react'
 import yaml from 'js-yaml'
 import { parsePlaybook } from './lib/parseYamlToFlow'
-import { pushToUrl, loadFromUrl } from './lib/shareUrl'
+import { persistState, buildShareUrl, loadFromUrl } from './lib/shareUrl'
 import { toMermaidFlow, toPlantUmlFlow } from './lib/exportFlowText'
-import { SAMPLE_YAML } from './lib/sampleYaml'
+import { SAMPLE_YAML, SAMPLE_SNIPPET } from './lib/sampleYaml'
 import { SAMPLE_JINJA2 } from './lib/sampleJinja2'
 import { SAMPLE_INVENTORY, SAMPLE_HOSTVARS } from './lib/sampleInventory'
 import { DEFAULT_FACTS } from './lib/defaultFacts'
@@ -30,13 +30,17 @@ import QuickCard from './components/QuickCard'
 import PipelineView from './components/PipelineView'
 import AboutPage from './components/AboutPage'
 import InventoryLab from './components/InventoryLab'
-import { useFileDrop } from './lib/useFileDrop'
+import ResolveView from './components/ResolveView'
+import { useFileDrop, readDataTransferFiles } from './lib/useFileDrop'
+import { isProject, buildProjectModel } from './lib/projectModel'
+import { parseInventoryText } from './lib/parseInventory'
 import { startTour } from './lib/tour'
 
 import {
   Share2, AlertCircle, RotateCcw, BookOpen,
   ClipboardPaste, Layers, Zap, FileCode,
   FlaskConical, Variable, FlaskRound, HelpCircle, Info,
+  GitBranch, Network, MoreVertical,
 } from 'lucide-react'
 
 const MODE_PATHS = {
@@ -151,7 +155,7 @@ export default function App() {
   // ── Per-mode independent text buffers ─────────────────────────
   const [texts, setTexts] = useState(() => ({
     playbook: initialMode === 'playbook' && urlState?.yaml ? urlState.yaml : SAMPLE_YAML,
-    snippet: initialMode === 'snippet' && urlState?.yaml ? urlState.yaml : '',
+    snippet: initialMode === 'snippet' && urlState?.yaml ? urlState.yaml : SAMPLE_SNIPPET,
     jinja2: initialMode === 'jinja2' && urlState?.yaml ? urlState.yaml : SAMPLE_JINJA2,
   }))
 
@@ -169,10 +173,25 @@ export default function App() {
   const [selectedNode, setSelectedNode]             = useState(null)
   const [highlightLines, setHighlightLines]         = useState(null)
   const [copySuccess, setCopySuccess]               = useState(false)
+  const [shareTooLarge, setShareTooLarge]           = useState(false)
   const [showMockPanel, setShowMockPanel]           = useState(false)
   const [showVarsPanel, setShowVarsPanel]           = useState(true)
   const [userVars, setUserVars]                     = useState({})
   const [limitsShareState, setLimitsShareState]     = useState(() => urlState?.limits ?? null)
+  const [viewMode, setViewMode]                     = useState('flow')   // playbook mode: 'flow' | 'resolve'
+  const userPickedView                              = useRef(false)
+  const [actionsMenuOpen, setActionsMenuOpen]       = useState(false)    // mobile/tablet "⋯" actions menu
+  const actionsMenuRef                              = useRef(null)
+
+  // Close the mobile actions menu on outside click
+  useEffect(() => {
+    if (!actionsMenuOpen) return undefined
+    const onDown = (e) => {
+      if (actionsMenuRef.current && !actionsMenuRef.current.contains(e.target)) setActionsMenuOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [actionsMenuOpen])
 
   // Ensure URL state is fully applied after first mount.
   // This avoids rare cases where initial render falls back to defaults
@@ -183,15 +202,23 @@ export default function App() {
     const hydratedMode = getModeFromLocation(urlState)
     setMode(hydratedMode)
 
+    const contentMode = hydratedMode === 'landing' ? getContentModeFromState(urlState) : hydratedMode
     if (urlState.yaml) {
-      const targetMode = hydratedMode === 'landing' ? getContentModeFromState(urlState) : hydratedMode
-      setTexts((prev) => ({ ...prev, [targetMode]: urlState.yaml }))
+      setTexts((prev) => ({ ...prev, [contentMode]: urlState.yaml }))
     }
 
     if (urlState.facts) setFacts(urlState.facts)
     setExtraFiles(normaliseExtraFiles(urlState.extraFiles))
     setLimitsShareState(urlState?.limits ?? null)
     setActiveFileId('main')
+
+    // A shared link carried its state in the hash. Only playbook mode mirrors
+    // its content into localStorage (auto-persist), so only then can we strip
+    // the hash and still restore on refresh. snippet/jinja/limits shares have
+    // no localStorage mirror, so keep their hash — it's what restores them.
+    if (urlState.fromHash && contentMode === 'playbook') {
+      globalThis.history.replaceState(null, '', globalThis.location.pathname)
+    }
   }, [urlState])
 
   useEffect(() => {
@@ -233,6 +260,16 @@ export default function App() {
     return { fileRegistry: registry, fileErrors: errors }
   }, [debouncedExtraFiles])
 
+  // Detect a dropped Ansible project (group_vars/, host_vars/, roles/, inventory…)
+  const projectDetected = useMemo(() => isProject(debouncedExtraFiles), [debouncedExtraFiles])
+
+  // First time a project appears, jump to the Resolve view (unless the user has
+  // manually chosen a view). When the project goes away, fall back to Flow.
+  useEffect(() => {
+    if (projectDetected && !userPickedView.current) setViewMode('resolve')
+    if (!projectDetected) { setViewMode('flow'); userPickedView.current = false }
+  }, [projectDetected])
+
   useEffect(() => {
     if (mode === 'landing' && globalThis.location.pathname !== '/' && !globalThis.location.hash) {
       updateBrowserPath('landing')
@@ -241,11 +278,12 @@ export default function App() {
     if (mode !== 'landing') updateBrowserPath(mode)
   }, [mode])
 
-  // Auto-persist state into the URL hash so refresh restores everything
-  // (uses replaceState — doesn't add browser history entries)
+  // Auto-persist state to localStorage so a refresh restores everything,
+  // without cluttering the address bar with a giant hash. (Sharing encodes
+  // into the URL on demand — see handleShare.)
   useEffect(() => {
     if (mode !== 'playbook') return
-    pushToUrl(debouncedPlaybook, debouncedFactsForUrl, debouncedExtraFiles)
+    persistState(debouncedPlaybook, debouncedFactsForUrl, debouncedExtraFiles)
   }, [mode, debouncedPlaybook, debouncedFactsForUrl, debouncedExtraFiles])
 
   useEffect(() => {
@@ -253,14 +291,18 @@ export default function App() {
       const nextState = loadFromUrl()
       const nextMode = getModeFromLocation(nextState)
       setMode(nextMode)
-      if (nextState?.yaml) {
+      // Only hydrate buffers from a restored state that belongs to the target
+      // mode: a shared-link hash, or the playbook session in localStorage.
+      // (snippet/jinja keep their in-memory buffers on back/forward.)
+      const applies = Boolean(nextState && (nextState.fromHash || nextMode === 'playbook'))
+      if (applies && nextState.yaml) {
         setTexts((prev) => ({
           ...prev,
           [nextMode === 'landing' ? getContentModeFromState(nextState) : nextMode]: nextState.yaml,
         }))
       }
-      if (nextState?.facts) setFacts(nextState.facts)
-      if (nextState?.extraFiles) {
+      if (applies && nextState.facts) setFacts(nextState.facts)
+      if (applies && nextState.extraFiles?.length) {
         setExtraFiles(normaliseExtraFiles(nextState.extraFiles))
       } else {
         setExtraFiles([])
@@ -279,6 +321,24 @@ export default function App() {
   const handleSetMode = useCallback((newMode) => {
     updateBrowserPath(newMode, 'pushState')
     setMode(newMode)
+    setSelectedNode(null)
+    setHighlightLines(null)
+  }, [])
+
+  // Playbook-mode view switch (Flow ↔ Resolve)
+  const handleSelectView = useCallback((v) => { userPickedView.current = true; setViewMode(v) }, [])
+
+  // Handoff from the resolver: load a host's resolved vars into Flow / Jinja2
+  const handleUseInFlow = useCallback((ctx) => {
+    setUserVars(ctx || {})
+    userPickedView.current = true
+    setViewMode('flow')
+  }, [])
+
+  const handleOpenInJinja2 = useCallback((ctx) => {
+    setUserVars(ctx || {})
+    updateBrowserPath('jinja2', 'pushState')
+    setMode('jinja2')
     setSelectedNode(null)
     setHighlightLines(null)
   }, [])
@@ -333,6 +393,58 @@ export default function App() {
     setHighlightLines(null)
   }, [])
 
+  // Smart router for dropped/opened files: figure out what was dropped and take
+  // the user to the most appropriate place.
+  //   • a project (folder/zip with inventory/group_vars/roles/…) → Playbook ▸ Resolve
+  //   • a single playbook / snippet / jinja2 expression → its dedicated tab
+  //   • a single inventory file → Limits Lab
+  //   • anything else multi-file → Playbook ▸ Flow with the files loaded
+  const loadDroppedFiles = useCallback((files) => {
+    if (!Array.isArray(files) || files.length === 0) return
+    const project = isProject(files)
+
+    if (!project && files.length === 1) {
+      const { content } = files[0]
+      if (detectContentType(content) === 'unknown') {
+        // Maybe a standalone inventory file → open the Limits Lab with it loaded.
+        const inv = parseInventoryText(content)
+        const hasHosts = inv.groups && Object.values(inv.groups).some((h) => Array.isArray(h) && h.length > 0)
+        if (hasHosts) {
+          const limits = { inventory: inv.groups, hostvars: inv.hostvars ?? {}, limit: '' }
+          setLimitsShareState(limits)
+          try {
+            globalThis.localStorage.setItem('ansible101:inventory', JSON.stringify(inv.groups))
+            globalThis.localStorage.setItem('ansible101:hostvars', JSON.stringify(inv.hostvars ?? {}))
+          } catch { /* ignore */ }
+          updateBrowserPath('limits', 'pushState')
+          setMode('limits')
+          setSelectedNode(null)
+          setHighlightLines(null)
+          return
+        }
+      }
+      handlePasteContent(content)
+      return
+    }
+
+    // Project or multi-file → Playbook mode. Surface the primary playbook in the
+    // editable buffer and keep the rest of the tree as project files.
+    const pm = buildProjectModel(files.map((f, i) => ({ id: String(i), name: f.name, content: f.content })))
+    const primary = pm.playbookCandidates[0]?.path
+    const mainContent = primary ? pm.files[primary] : ''
+    const rest = primary ? files.filter((f) => f.name !== primary) : files
+
+    setTexts((prev) => ({ ...prev, playbook: mainContent }))
+    setExtraFiles(rest.map((f, i) => ({ id: `drop-${Date.now()}-${i}`, name: f.name, content: f.content })))
+    setActiveFileId('main')
+    userPickedView.current = false
+    setViewMode(project ? 'resolve' : 'flow')
+    updateBrowserPath('playbook', 'pushState')
+    setMode('playbook')
+    setSelectedNode(null)
+    setHighlightLines(null)
+  }, [handlePasteContent])
+
   // Global Ctrl+V / paste listener
   useEffect(() => {
     const onPaste = (e) => {
@@ -351,9 +463,11 @@ export default function App() {
     return () => globalThis.removeEventListener('paste', onPaste)
   }, [mode, handlePasteContent])
 
-  // Share — encode current mode state into URL
+  // Share — encode current mode state into a link and copy it to the clipboard.
+  // Does not mutate the address bar; the encoded hash only lives in the copied URL.
   const handleShare = useCallback(() => {
     updateBrowserPath(mode)
+    let result
     if (mode === 'limits') {
       const inventory = limitsShareState?.inventory ?? {}
       const hasInventoryHosts = Object.values(inventory).some((hosts) => Array.isArray(hosts) && hosts.length > 0)
@@ -361,7 +475,7 @@ export default function App() {
       const hasLimit = Boolean((limitsShareState?.limit ?? '').trim())
       if (!hasInventoryHosts && !hasHostvars && !hasLimit) return
 
-      pushToUrl('', null, [], {
+      result = buildShareUrl('', null, [], {
         mode: 'limits',
         limits: {
           inventory,
@@ -371,9 +485,16 @@ export default function App() {
       })
     } else {
       const factsForUrl = stableStringify(facts) === stableStringify(DEFAULT_FACTS) ? null : facts
-      pushToUrl(yamlText, factsForUrl, extraFiles)
+      result = buildShareUrl(yamlText, factsForUrl, extraFiles)
     }
-    globalThis.navigator.clipboard?.writeText(globalThis.location.href).then(() => {
+    // Some projects are too big to encode into a practical link. The work is
+    // still auto-saved to this browser; it just can't travel in a URL.
+    if (result.tooLong) {
+      setShareTooLarge(true)
+      setTimeout(() => setShareTooLarge(false), 3500)
+      return
+    }
+    globalThis.navigator.clipboard?.writeText(result.url).then(() => {
       setCopySuccess(true)
       setTimeout(() => setCopySuccess(false), 2500)
     })
@@ -416,7 +537,7 @@ export default function App() {
 
   // Reset
   const handleReset = useCallback(() => {
-    setTexts({ playbook: SAMPLE_YAML, snippet: '', jinja2: SAMPLE_JINJA2 })
+    setTexts({ playbook: SAMPLE_YAML, snippet: SAMPLE_SNIPPET, jinja2: SAMPLE_JINJA2 })
     setFacts(DEFAULT_FACTS)
     setExtraFiles([])
     setActiveFileId('main')
@@ -432,6 +553,12 @@ export default function App() {
     setMode('playbook')
     setSelectedNode(null)
     setHighlightLines(null)
+  }, [])
+
+  const handleLoadSnippetSample = useCallback(() => {
+    setTexts((prev) => ({ ...prev, snippet: SAMPLE_SNIPPET }))
+    updateBrowserPath('snippet', 'pushState')
+    setMode('snippet')
   }, [])
 
   const handleLoadInventorySample = useCallback(() => {
@@ -507,6 +634,9 @@ export default function App() {
 
   // Drop files into the editor area (YAML or ZIP → extract YAML)
   const handleDropFiles = useCallback((dropped) => {
+    // A whole project? Route it (sets the primary playbook + opens Resolve).
+    if (isProject(dropped)) { loadDroppedFiles(dropped); return }
+    // Otherwise merge into the current file set.
     const newFiles = dropped.map(({ name, content }) => ({
       id: `file-${Date.now()}-${Math.random().toString(36).slice(2)}`,
       name,
@@ -519,7 +649,7 @@ export default function App() {
       return Array.from(map.values())
     })
     if (newFiles.length > 0) setActiveFileId(newFiles[newFiles.length - 1].id)
-  }, [])
+  }, [loadDroppedFiles])
 
   const { isDragging, dropProps } = useFileDrop(handleDropFiles)
 
@@ -559,6 +689,7 @@ export default function App() {
     return (
       <LandingScreen
         onPaste={handlePasteContent}
+        onDropFiles={loadDroppedFiles}
         onLoadSample={handleLoadSample}
         onLoadInventorySample={handleLoadInventorySample}
         onOpenLimits={() => handleSetMode('limits')}
@@ -574,118 +705,148 @@ export default function App() {
 
   return (
     <div className="flex min-h-screen md:h-screen flex-col bg-slate-950 text-white overflow-x-hidden md:overflow-hidden">
-      {/* Top Bar */}
-      <header className="flex shrink-0 flex-col gap-3 border-b border-slate-800 bg-slate-950 px-3 py-3 z-10 md:flex-row md:items-center md:justify-between md:gap-2 md:px-4 md:py-2">
-        <div className="flex items-center gap-2 shrink-0">
-          <BookOpen size={16} className="text-cyan-400" />
-          <button
-            onClick={() => handleSetMode('landing')}
-            className="text-cyan-400 font-mono font-bold tracking-wider text-sm hover:text-cyan-300 transition-colors"
-          >
-            Ansible<sup className="text-cyan-400 text-[8px] align-super">®</sup><span className="text-white">101</span>
-          </button>
-        </div>
-
-        {/* Mode selector */}
-        <div className="flex w-full flex-col gap-1 md:w-auto md:gap-0">
-          <span className="px-1 text-[10px] font-mono uppercase tracking-[0.16em] text-slate-600 md:hidden">
-            Main Features
+      {/* Top Bar — fully responsive, single row at every width (no horizontal
+          scroll). Mode-tab labels collapse to icons below md; secondary action
+          buttons collapse into a "⋯" menu below lg. */}
+      <header className="grid shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-2 border-b border-slate-800 bg-slate-950 px-3 py-2 z-10 md:px-4">
+        <button
+          onClick={() => handleSetMode('landing')}
+          className="flex items-center gap-2 shrink-0 justify-self-start text-cyan-400 hover:text-cyan-300 transition-colors"
+        >
+          <BookOpen size={16} className="shrink-0" />
+          <span className="hidden sm:inline font-mono font-bold tracking-wider text-sm">
+            Ansible<sup className="text-[8px] align-super">®</sup><span className="text-white">101</span>
           </span>
-          <div data-tour="mode-tabs" className="grid w-full grid-cols-2 gap-1 rounded-lg border border-slate-800 p-1 md:flex md:w-auto md:flex-nowrap md:items-center md:gap-1 md:p-0.5">
+        </button>
+
+        {/* Mode selector — centered column; icon-only below md */}
+        <div className="flex items-center min-w-0 justify-self-center">
+          <div data-tour="mode-tabs" className="flex flex-nowrap items-center gap-1 rounded-lg border border-slate-800 p-0.5">
             {Object.entries(MODE_META).map(([key, meta]) => (
               <button
                 key={key}
                 onClick={() => handleSetMode(key)}
-                className={`flex items-center justify-center gap-1.5 px-2.5 py-2 min-h-[42px] rounded text-xs font-mono transition-all duration-200 border md:justify-start md:min-h-0 md:py-1
+                title={meta.label}
+                className={`flex items-center justify-center gap-1.5 px-2.5 py-1 min-h-[38px] md:min-h-0 rounded text-xs font-mono whitespace-nowrap transition-all duration-200 border
                   ${mode === key
                     ? `${meta.color} bg-slate-800 border-slate-700 shadow-sm`
                     : 'text-slate-500 border-transparent hover:text-slate-300 hover:bg-slate-800/50'
                   }`}
               >
-                <meta.Icon size={11} />
-                {meta.label}
+                <meta.Icon size={13} className="shrink-0" />
+                <span className="hidden md:inline">{meta.label}</span>
               </button>
             ))}
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 shrink-0 md:justify-end">
-          <button
-            data-tour="btn-vars"
-            onClick={() => setShowVarsPanel((v) => !v)}
-            title="Toggle Playbook Vars panel"
-            className={`flex items-center gap-1.5 px-2.5 py-2 min-h-[40px] rounded border text-xs font-mono transition-all md:min-h-0 md:py-1.5
-              ${mode !== 'playbook' ? 'hidden' : ''}
-              ${showVarsPanel && mode === 'playbook'
-                ? 'border-violet-600 text-violet-300 bg-violet-950'
-                : 'border-slate-700 text-slate-500 hover:text-violet-400 hover:border-violet-700'
-              }`}
-          >
-            <Variable size={12} />
-            Vars
-          </button>
-
+        <div className="flex flex-nowrap items-center gap-2 shrink-0 justify-self-end">
+          {/* Parse error — desktop only (also surfaced in the editor/flow) */}
           {parseError && mode === 'playbook' && (
-            <div className="flex items-center gap-1.5 rounded bg-red-950 border border-red-800 px-2 py-1 max-w-full md:max-w-[220px] animate-fade-in">
+            <div className="hidden lg:flex items-center gap-1.5 rounded bg-red-950 border border-red-800 px-2 py-1 max-w-[220px] animate-fade-in">
               <AlertCircle size={12} className="text-red-400 shrink-0" />
               <span className="text-red-300 text-[10px] font-mono truncate">{parseError?.message}</span>
             </div>
           )}
 
-          <button
-            onClick={() => handleSetMode('about')}
-            className="flex items-center gap-1.5 px-2.5 py-2 min-h-[40px] rounded border border-slate-700 text-slate-400 hover:border-slate-500 hover:text-white text-xs font-mono transition-all md:min-h-0 md:py-1.5"
-          >
-            About
-          </button>
-          <button
-            data-tour="btn-facts"
-            onClick={() => setShowMockPanel((v) => !v)}
-            title="Toggle Mock Facts panel"
-            className={`flex items-center gap-1.5 px-2.5 py-2 min-h-[40px] rounded border text-xs font-mono transition-all md:min-h-0 md:py-1.5
-              ${showMockPanel
-                ? 'border-amber-600 text-amber-300 bg-amber-950'
-                : 'border-slate-700 text-slate-500 hover:text-amber-400 hover:border-amber-700'
-              }`}
-          >
-            <FlaskConical size={12} />
-            Facts
-          </button>
+          {/* Secondary actions — inline at lg, "⋯" dropdown below lg */}
+          <div className="relative" ref={actionsMenuRef}>
+            <button
+              onClick={() => setActionsMenuOpen((o) => !o)}
+              aria-label="More actions"
+              aria-expanded={actionsMenuOpen}
+              className={`lg:hidden flex items-center justify-center min-h-[40px] min-w-[40px] rounded border text-xs font-mono transition-all
+                ${actionsMenuOpen ? 'border-slate-500 text-white bg-slate-800' : 'border-slate-700 text-slate-400 hover:text-white hover:border-slate-500'}`}
+            >
+              <MoreVertical size={16} />
+            </button>
 
-          <button
-            onClick={handleReset}
-            className="flex items-center gap-1.5 px-2.5 py-2 min-h-[40px] rounded border border-slate-700 hover:border-slate-500 text-slate-400 hover:text-white text-xs font-mono transition-all md:min-h-0 md:py-1.5"
-          >
-            <RotateCcw size={12} />
-            Reset
-          </button>
+            <div
+              onClick={() => setActionsMenuOpen(false)}
+              className={`${actionsMenuOpen ? 'flex' : 'hidden'} lg:flex
+                flex-col lg:flex-row items-stretch lg:items-center gap-1 lg:gap-2
+                absolute right-0 top-full mt-1 lg:static lg:mt-0 z-50
+                min-w-[180px] lg:min-w-0 rounded-lg lg:rounded-none border lg:border-0 border-slate-700 bg-slate-900 lg:bg-transparent p-1 lg:p-0 shadow-xl lg:shadow-none
+                [&>button]:w-full lg:[&>button]:w-auto`}
+            >
+              <button
+                data-tour="btn-vars"
+                onClick={() => setShowVarsPanel((v) => !v)}
+                title="Toggle Playbook Vars panel"
+                className={`flex items-center gap-1.5 px-2.5 py-2 min-h-[40px] rounded border text-xs font-mono transition-all lg:min-h-0 lg:py-1.5
+                  ${!(mode === 'playbook' && viewMode === 'flow') ? 'hidden' : ''}
+                  ${showVarsPanel && mode === 'playbook'
+                    ? 'border-violet-600 text-violet-300 bg-violet-950'
+                    : 'border-slate-700 text-slate-500 hover:text-violet-400 hover:border-violet-700'
+                  }`}
+              >
+                <Variable size={12} />
+                Vars
+              </button>
 
-          <button
-            onClick={() => startTour(mode)}
-            title="Start walkthrough for this page"
-            className="flex items-center gap-1.5 px-2.5 py-2 min-h-[40px] rounded border border-slate-700 text-slate-400 hover:border-cyan-700 hover:text-cyan-400 text-xs font-mono transition-all md:min-h-0 md:py-1.5"
-          >
-            <HelpCircle size={12} />
-            Tour
-          </button>
+              <button
+                data-tour="btn-facts"
+                onClick={() => setShowMockPanel((v) => !v)}
+                title="Toggle Mock Facts panel"
+                className={`flex items-center gap-1.5 px-2.5 py-2 min-h-[40px] rounded border text-xs font-mono transition-all lg:min-h-0 lg:py-1.5
+                  ${mode === 'playbook' && viewMode === 'resolve' ? 'hidden' : ''}
+                  ${showMockPanel
+                    ? 'border-amber-600 text-amber-300 bg-amber-950'
+                    : 'border-slate-700 text-slate-500 hover:text-amber-400 hover:border-amber-700'
+                  }`}
+              >
+                <FlaskConical size={12} />
+                Facts
+              </button>
 
+              <button
+                onClick={() => handleSetMode('about')}
+                className="flex items-center gap-1.5 px-2.5 py-2 min-h-[40px] rounded border border-slate-700 text-slate-400 hover:border-slate-500 hover:text-white text-xs font-mono transition-all lg:min-h-0 lg:py-1.5"
+              >
+                <Info size={12} />
+                About
+              </button>
+
+              <button
+                onClick={handleReset}
+                className="flex items-center gap-1.5 px-2.5 py-2 min-h-[40px] rounded border border-slate-700 hover:border-slate-500 text-slate-400 hover:text-white text-xs font-mono transition-all lg:min-h-0 lg:py-1.5"
+              >
+                <RotateCcw size={12} />
+                Reset
+              </button>
+
+              <button
+                onClick={() => startTour(mode)}
+                title="Start walkthrough for this page"
+                className="flex items-center gap-1.5 px-2.5 py-2 min-h-[40px] rounded border border-slate-700 text-slate-400 hover:border-cyan-700 hover:text-cyan-400 text-xs font-mono transition-all lg:min-h-0 lg:py-1.5"
+              >
+                <HelpCircle size={12} />
+                Tour
+              </button>
+            </div>
+          </div>
+
+          {/* Share — always inline (text collapses to icon below sm) */}
           {canShare && (
             <div className="flex items-center gap-1.5">
               <button
                 data-tour="btn-share"
                 onClick={handleShare}
+                title="Build a shareable link"
                 className={`flex items-center gap-1.5 px-2.5 py-2 min-h-[40px] rounded border text-xs font-mono transition-all md:min-h-0 md:py-1.5
                   ${copySuccess
                     ? 'border-green-500 text-green-400 bg-green-950'
-                    : 'border-cyan-800 hover:border-cyan-500 text-cyan-400 hover:text-cyan-300'
+                    : shareTooLarge
+                      ? 'border-amber-600 text-amber-300 bg-amber-950'
+                      : 'border-cyan-800 hover:border-cyan-500 text-cyan-400 hover:text-cyan-300'
                   }`}
               >
                 <Share2 size={12} />
-                {copySuccess ? 'Copied!' : 'Share'}
+                <span className="hidden sm:inline">{copySuccess ? 'Copied!' : shareTooLarge ? 'Too large to share' : 'Share'}</span>
               </button>
               <span
-                className="inline-flex min-h-[40px] min-w-[40px] items-center justify-center rounded text-slate-600 hover:text-slate-400 transition-colors"
-                title="Share stores data in the URL hash only. No server upload is performed."
+                className="hidden sm:inline-flex min-h-[40px] min-w-[40px] items-center justify-center rounded text-slate-600 hover:text-slate-400 transition-colors"
+                title="Your work auto-saves in this browser. Share builds a link with the data encoded in the URL hash — no server upload. Very large projects can't fit in a link."
                 aria-label="Sharing privacy note"
               >
                 <Info size={12} />
@@ -704,7 +865,7 @@ export default function App() {
           />
         )}
 
-        {/* Left pane: editor — hidden in limits mode */}
+        {/* Left pane: editor — hidden only in limits mode (stays visible in both Flow & Resolve) */}
         {mode !== 'limits' && (
         <div
           data-tour="editor-pane"
@@ -726,8 +887,8 @@ export default function App() {
             </div>
           )}
           <PaneHeader
-            label={mode === 'jinja2' ? 'Jinja2 Expression' : 'Playbook YAML'}
-            color={mode === 'jinja2' ? 'text-violet-400' : 'text-cyan-400'}
+            label={mode === 'jinja2' ? 'Jinja2 Expression' : mode === 'snippet' ? 'Task Snippet' : 'Playbook YAML'}
+            color={mode === 'jinja2' ? 'text-violet-400' : mode === 'snippet' ? 'text-blue-400' : 'text-cyan-400'}
           />
           <div className="flex flex-col overflow-visible md:flex-1 md:flex-row md:overflow-hidden">
             {mode === 'playbook' && (
@@ -759,7 +920,7 @@ export default function App() {
                   />
                 </Suspense>
               </div>
-              {showVarsPanel && mode === 'playbook' && (
+              {showVarsPanel && mode === 'playbook' && viewMode === 'flow' && (
                 <PlayVarsPanel
                   yamlText={debouncedPlaybook}
                   plays={plays}
@@ -767,7 +928,7 @@ export default function App() {
                   onUserVarsChange={setUserVars}
                 />
               )}
-              {showMockPanel && (
+              {showMockPanel && !(mode === 'playbook' && viewMode === 'resolve') && (
                 <MockContextPanel facts={facts} onFactsChange={setFacts} />
               )}
             </div>
@@ -775,38 +936,76 @@ export default function App() {
         </div>
         )} {/* end mode !== 'limits' left pane */}
 
-        {/* Right area  mode-specific */}
+        {/* Right region — a Flow/Resolve tab bar swaps just this region's content */}
         {mode === 'playbook' && (
-          <>
-            <div className="flex shrink-0 flex-col w-full h-[55vh] overflow-hidden border-b border-slate-800 animate-fade-up md:h-auto md:min-h-0 md:flex-1 md:border-b-0 md:border-r" data-tour="flow-pane">
-              <PaneHeader label="Execution Flow" color="text-slate-400" />
-              <div className="flex-1 overflow-hidden">
-                {nodes.length > 0 ? (
-                  <Suspense fallback={<FlowSkeleton />}>
-                    <FlowCanvas
-                      nodes={nodes}
-                      edges={edges}
-                      onNodeClick={handleNodeClick}
-                      onExportMermaid={handleExportMermaid}
-                      onExportUml={handleExportUml}
-                    />
-                  </Suspense>
-                ) : (
-                  <EmptyFlow parseError={parseError} />
-                )}
+          <div className="flex w-full flex-col overflow-hidden md:flex-1 md:min-h-0">
+            {/* Tab bar (attached to the panel it controls) */}
+            <div data-tour="view-tabs" className="flex shrink-0 items-center gap-0.5 border-b border-slate-800 bg-slate-950 px-2">
+              {[
+                { key: 'flow', label: 'Execution Flow', Icon: GitBranch },
+                { key: 'resolve', label: 'Variable Resolver', Icon: Network },
+              ].map(({ key, label, Icon }) => (
+                <button
+                  key={key}
+                  onClick={() => handleSelectView(key)}
+                  className={`relative flex items-center gap-1.5 px-3 py-2 text-[11px] font-mono uppercase tracking-wider transition-colors
+                    ${viewMode === key ? 'text-cyan-300' : 'text-slate-500 hover:text-slate-300'}`}
+                >
+                  <Icon size={12} />
+                  {label}
+                  {key === 'resolve' && projectDetected && <span className="w-1 h-1 rounded-full bg-emerald-400" title="Project detected" />}
+                  {viewMode === key && <span className="absolute left-2 right-2 -bottom-px h-0.5 rounded-full bg-cyan-400" />}
+                </button>
+              ))}
+            </div>
+
+            {/* Content */}
+            {viewMode === 'flow' ? (
+              <div className="flex w-full flex-col overflow-hidden md:flex-1 md:flex-row md:min-h-0">
+                <div className="flex shrink-0 flex-col w-full h-[55vh] overflow-hidden border-b border-slate-800 animate-fade-up md:h-auto md:min-h-0 md:flex-1 md:border-b-0 md:border-r" data-tour="flow-pane">
+                  <div className="flex-1 overflow-hidden">
+                    {nodes.length > 0 ? (
+                      <Suspense fallback={<FlowSkeleton />}>
+                        <FlowCanvas
+                          nodes={nodes}
+                          edges={edges}
+                          onNodeClick={handleNodeClick}
+                          onExportMermaid={handleExportMermaid}
+                          onExportUml={handleExportUml}
+                        />
+                      </Suspense>
+                    ) : (
+                      <EmptyFlow parseError={parseError} />
+                    )}
+                  </div>
+                </div>
+                <div className="flex shrink-0 flex-col w-full h-[38vh] overflow-hidden animate-fade-up md:h-auto md:w-[26%] md:min-w-[200px] md:min-h-0" data-tour="human-sidebar" style={{ animationDelay: '40ms' }}>
+                  <HumanSidebar plays={plays} selectedNode={selectedNode} />
+                </div>
               </div>
-            </div>
-            <div className="flex shrink-0 flex-col w-full h-[38vh] overflow-hidden animate-fade-up md:h-auto md:w-[26%] md:min-w-[200px] md:min-h-0" data-tour="human-sidebar" style={{ animationDelay: '40ms' }}>
-              <HumanSidebar plays={plays} selectedNode={selectedNode} />
-            </div>
-          </>
+            ) : (
+              <div className="flex w-full flex-col overflow-hidden h-[80vh] animate-fade-up md:h-auto md:flex-1 md:min-h-0">
+                <ResolveView
+                  mainPlaybook={debouncedPlaybook}
+                  extraFiles={extraFiles}
+                  facts={facts}
+                  onFactsChange={setFacts}
+                  onUseInFlow={handleUseInFlow}
+                  onOpenInJinja2={handleOpenInJinja2}
+                  onAddFiles={handleDropFiles}
+                  dropProps={dropProps}
+                  isDragging={isDragging}
+                />
+              </div>
+            )}
+          </div>
         )}
 
         {mode === 'snippet' && (
           <div className="flex-1 shrink-0 h-[42vh] overflow-hidden animate-fade-up md:h-auto md:min-h-0" data-tour="snippet-pane">
             {snippetTask
               ? <QuickCard task={snippetTask} facts={facts} />
-              : <EmptyQuickCard />
+              : <EmptyQuickCard onLoadExample={handleLoadSnippetSample} />
             }
           </div>
         )}
@@ -863,11 +1062,27 @@ function EmptyFlow({ parseError }) {
   )
 }
 
-function EmptyQuickCard() {
+function EmptyQuickCard({ onLoadExample }) {
   return (
-    <div className="h-full flex flex-col items-center justify-center gap-3 text-slate-700">
-      <FileCode size={34} />
-      <p className="text-xs font-mono text-center px-8">Paste a task snippet to see its Quick Card.</p>
+    <div className="h-full flex flex-col items-center justify-center gap-4 px-8 text-center">
+      <FileCode size={34} className="text-slate-600" />
+      <div className="max-w-sm space-y-1.5">
+        <p className="text-slate-300 text-sm font-mono">Task Snippet decoder</p>
+        <p className="text-[11px] font-mono leading-relaxed text-slate-500">
+          Paste a single Ansible task — a <code className="text-slate-400">- name:</code> block with a module —
+          to see its module, arguments, a plain-English explanation, and live rendering of any
+          <code className="text-slate-400"> {'{{ }}'}</code> values.
+        </p>
+      </div>
+      {onLoadExample && (
+        <button
+          onClick={onLoadExample}
+          className="flex items-center gap-2 px-4 py-2 rounded-lg border border-blue-700 bg-blue-950/40 hover:bg-blue-950/70 hover:border-blue-500 text-blue-300 hover:text-blue-200 text-sm font-mono transition-all"
+        >
+          <FileCode size={14} />
+          Load example task
+        </button>
+      )}
     </div>
   )
 }
@@ -909,6 +1124,7 @@ function FlowSkeleton() {
 
 function LandingScreen({
   onPaste,
+  onDropFiles,
   onLoadSample,
   onLoadInventorySample,
   onOpenLimits,
@@ -918,18 +1134,16 @@ function LandingScreen({
   const [dragOver, setDragOver] = useState(false)
   const dropRef = useRef(null)
 
-  const handleDrop = useCallback((e) => {
+  const handleDrop = useCallback(async (e) => {
     e.preventDefault()
     setDragOver(false)
-    // Prefer file contents over plain-text drag
-    const file = e.dataTransfer?.files?.[0]
-    if (file) {
-      file.text().then((result) => { if (result) onPaste(result) })
-      return
-    }
+    // Extract dropped folder/zip/files (paths preserved) and let the router
+    // decide where to go. Fall back to plain-text drag.
+    const files = await readDataTransferFiles(e.dataTransfer)
+    if (files.length > 0) { onDropFiles(files); return }
     const text = e.dataTransfer?.getData('text/plain')
     if (text) onPaste(text)
-  }, [onPaste])
+  }, [onDropFiles, onPaste])
 
   const handleDragLeave = useCallback((e) => {
     // Only clear when pointer truly leaves the outer container

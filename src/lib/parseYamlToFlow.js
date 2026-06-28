@@ -106,6 +106,8 @@ function getVisualNodeWidth(node) {
       return 220
     case 'mergeNode':
       return 12
+    case 'endNode':
+      return 70
     default:
       return TASK_WIDTH
   }
@@ -495,6 +497,18 @@ export function parsePlaybook(plays, rawYaml, facts = {}, fileRegistry = {}) {
       prevId = res2.prevId
       globalY = res2.globalY
     }
+
+    // ── End-of-play marker ────────────────────────────────────────
+    const endId = nextId()
+    nodes.push({
+      id: endId,
+      type: 'endNode',
+      position: { x: X_BASE, y: globalY },
+      data: { label: 'End' },
+    })
+    edges.push({ id: `e${prevId}-${endId}`, source: prevId, target: endId })
+    globalY += 36 + ROW_GAP
+    prevId = endId
 
     // ── Handlers section ─────────────────────────────────────────
     const handlers = play.handlers || []

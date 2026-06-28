@@ -7,7 +7,7 @@ import { Handle, Position } from 'reactflow'
 import {
   Package, Terminal, FileCog, Activity, RefreshCw,
   Bell, Layers, HelpCircle, SkipForward,
-  FolderOpen, FileQuestion,
+  FolderOpen, FileQuestion, CheckCircle2,
 } from 'lucide-react'
 
 // ── Module → icon map ────────────────────────────────────────────
@@ -212,6 +212,25 @@ export function MergeNode() {
 }
 
 // ────────────────────────────────────────────────────────────────
+// End Node — terminator capping the end of a play's task chain
+// ────────────────────────────────────────────────────────────────
+export function EndNode({ data, selected }) {
+  return (
+    <div
+      className={`flex items-center gap-1.5 rounded-full border px-3 py-1 font-mono transition-all
+        ${selected ? 'border-cyber-cyan shadow-[0_0_10px_#22d3ee]' : 'border-slate-600'}
+        bg-slate-900`}
+    >
+      <Handle type="target" position={Position.Top} style={handleStyle} />
+      <CheckCircle2 size={11} className="text-slate-500" />
+      <span className="text-[9px] uppercase tracking-widest text-slate-500">
+        {data?.label || 'End'}
+      </span>
+    </div>
+  )
+}
+
+// ────────────────────────────────────────────────────────────────
 // Handler Node — amber dashed card
 // ────────────────────────────────────────────────────────────────
 export function HandlerNode({ data, selected }) {
@@ -339,6 +358,7 @@ export const nodeTypes = {
   conditionalNode: ConditionalNode,
   skipNode: SkipNode,
   mergeNode: MergeNode,
+  endNode: EndNode,
   handlerNode: HandlerNode,
   sectionNode: SectionNode,
   includeNode: IncludeNode,

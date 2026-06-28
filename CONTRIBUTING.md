@@ -2,7 +2,7 @@
 
 Thanks for helping improve Ansible101.
 
-This project is a React + Vite app focused on visualizing Ansible playbooks, snippets, Jinja2 expressions, and inventory limit behavior.
+This project is a React + Vite app focused on visualizing Ansible playbooks, snippets, Jinja2 expressions, inventory limit behavior, and full-project variable precedence resolution.
 
 ## Getting Started
 

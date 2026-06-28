@@ -52,3 +52,17 @@ export const SAMPLE_YAML = `---
         name: nginx
         state: restarted
 `
+
+// A single task for the Snippet "Quick Card" decoder. Showcases a module with
+// arguments, a Jinja2-templated value, a condition, a handler notification, and
+// a registered result.
+export const SAMPLE_SNIPPET = `# Paste a single Ansible task here to decode it.
+- name: Ensure nginx is installed and running
+  apt:
+    name: "{{ web_package | default('nginx') }}"
+    state: present
+    update_cache: yes
+  when: ansible_os_family == "Debian"
+  notify: Restart nginx
+  register: nginx_install
+`

@@ -123,8 +123,10 @@ function getNunjucksEnv() {
 export function renderJinja2(template, context = {}) {
   try {
     const env = getNunjucksEnv()
-    // Ansible wraps bare expressions in {{ }}; ensure template is wrapped if bare
-    const tpl = template.trim().startsWith('{') ? template : `{{ ${template} }}`
+    // Ansible wraps bare expressions in {{ }}; ensure template is wrapped if bare.
+    // Templates that already contain a delimiter (e.g. "http://host:{{ port }}")
+    // must be left as-is — re-wrapping would nest {{ }} and break parsing.
+    const tpl = /\{\{|\{%/.test(template) ? template : `{{ ${template} }}`
     const result = env.renderString(tpl, context)
     return { result, error: null }
   } catch (e) {

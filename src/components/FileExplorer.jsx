@@ -1,5 +1,5 @@
 /**
- * FileExplorer.jsx — resizable, collapsible file sidebar with folder tree.
+ * FileExplorer.jsx — resizable, collapsible file sidebar with a nested folder tree.
  */
 /* eslint-disable react/prop-types */
 /* eslint-disable jsx-a11y/no-static-element-interactions */
@@ -42,35 +42,43 @@ function buildMissingRefs(extraFiles, nodes) {
   return out
 }
 
+function dirOf(name) { const i = name.lastIndexOf('/'); return i === -1 ? '' : name.slice(0, i) }
+function joinPath(dir, base) { return dir ? `${dir}/${base}` : base }
+
 /**
- * Groups extraFiles + missingRefs into a shallow tree.
- * Files whose name contains a '/' are grouped under their first path segment.
- * Returns array of: { kind:'file'|'missing'|'dir', ... }
+ * Build a recursive tree from full relative paths.
+ * Node: { dirs: Map<name, Node>, files: [{file,status,base}], missing: [{item,base}] }
  */
 function buildTree(extraFiles, statuses, missingRefs) {
-  const roots = []
-  const dirs = new Map()
-  const ensureDir = (name) => {
-    if (!dirs.has(name)) dirs.set(name, [])
-    return dirs.get(name)
+  const root = { dirs: new Map(), files: [], missing: [] }
+  const ensure = (parts) => {
+    let node = root
+    for (const p of parts) {
+      if (!node.dirs.has(p)) node.dirs.set(p, { dirs: new Map(), files: [], missing: [] })
+      node = node.dirs.get(p)
+    }
+    return node
   }
-
   extraFiles.forEach((f) => {
-    const i = f.name.indexOf('/')
-    if (i === -1) roots.push({ kind: 'file', file: f, status: statuses[f.id], rel: f.name })
-    else ensureDir(f.name.slice(0, i)).push({ kind: 'file', file: f, status: statuses[f.id], rel: f.name.slice(i + 1) })
+    const parts = f.name.split('/')
+    const base = parts.pop()
+    ensure(parts).files.push({ file: f, status: statuses[f.id], base })
   })
-
   missingRefs.forEach((item) => {
-    const i = item.filename.indexOf('/')
-    if (i === -1) roots.push({ kind: 'missing', item, rel: item.filename })
-    else ensureDir(item.filename.slice(0, i)).push({ kind: 'missing', item, rel: item.filename.slice(i + 1) })
+    const parts = item.filename.split('/')
+    const base = parts.pop()
+    ensure(parts).missing.push({ item, base })
   })
-
-  const dirEntries = []
-  dirs.forEach((children, name) => dirEntries.push({ kind: 'dir', name, children }))
-  return [...roots, ...dirEntries]
+  return root
 }
+
+function subtreeHasMissing(node) {
+  if (node.missing.length) return true
+  for (const child of node.dirs.values()) if (subtreeHasMissing(child)) return true
+  return false
+}
+
+const padFor = (depth) => ({ paddingLeft: depth * 11 + 8 })
 
 /* ─── row components ─────────────────────────────────────── */
 
@@ -92,7 +100,7 @@ function MainRow({ active, onSwitch }) {
   )
 }
 
-function FileRow({ file, status, rel, active, onSwitch, onRemove, onRename, indent = false, hasError = false, onDragStart, onDragOver, onDrop, isDragOver }) {
+function FileRow({ file, status, rel, depth = 0, active, onSwitch, onRemove, onRename, hasError = false, onDragStart, onDragOver, onDrop, isDragOver }) {
   const inputRef = useRef(null)
   const [renaming, setRenaming] = useState(false)
 
@@ -124,7 +132,8 @@ function FileRow({ file, status, rel, active, onSwitch, onRemove, onRename, inde
       onDragOver={(e) => { e.preventDefault(); onDragOver?.() }}
       onDrop={onDrop}
       onDragEnd={() => onDrop?.(null, true)}
-      className={`group flex items-center gap-1 ${indent ? 'pl-5' : 'pl-2'} pr-1 h-[24px] border-l-[2px] cursor-pointer transition-colors
+      style={padFor(depth)}
+      className={`group flex items-center gap-1 pr-1 h-[24px] border-l-[2px] cursor-pointer transition-colors
         ${isDragOver ? 'border-l-cyan-400 bg-cyan-950/30' : borderColor}
         ${active && !isDragOver ? 'bg-slate-800/70' : !isDragOver ? 'hover:bg-slate-800/30' : ''}`}
       onClick={renaming ? undefined : onSwitch}
@@ -163,9 +172,9 @@ function FileRow({ file, status, rel, active, onSwitch, onRemove, onRename, inde
   )
 }
 
-function MissingRow({ item, rel, onAdd, indent = false }) {
+function MissingRow({ item, rel, depth = 0, onAdd }) {
   return (
-    <div className={`group flex items-center gap-1 ${indent ? 'pl-5' : 'pl-2'} pr-1 h-[24px] border-l-[2px] border-l-orange-700/40 hover:bg-orange-950/10 transition-colors`}>
+    <div style={padFor(depth)} className="group flex items-center gap-1 pr-1 h-[24px] border-l-[2px] border-l-orange-700/40 hover:bg-orange-950/10 transition-colors">
       <span className="flex-1 min-w-0 font-mono text-[10px] truncate text-orange-700/60" title={item.filename}>
         {rel}
       </span>
@@ -180,11 +189,12 @@ function MissingRow({ item, rel, onAdd, indent = false }) {
   )
 }
 
-function FolderRow({ name, open, onToggle, hasMissing }) {
+function FolderRow({ name, open, onToggle, hasMissing, depth = 0 }) {
   return (
     <button
       onClick={onToggle}
-      className="w-full flex items-center gap-1 pl-2 pr-1 h-[22px] group hover:bg-slate-800/30 transition-colors"
+      style={padFor(depth)}
+      className="w-full flex items-center gap-1 pr-1 h-[22px] group hover:bg-slate-800/30 transition-colors"
     >
       <span
         className="text-[8px] font-mono text-slate-600 transition-transform duration-100 shrink-0 leading-none select-none"
@@ -200,13 +210,58 @@ function FolderRow({ name, open, onToggle, hasMissing }) {
   )
 }
 
+/* ─── recursive tree renderer ─────────────────────────────── */
+
+function TreeLevel({ node, path, depth, openDirs, toggleDir, ctx }) {
+  const dirNames = [...node.dirs.keys()].sort((a, b) => a.localeCompare(b))
+  const files = [...node.files].sort((a, b) => a.base.localeCompare(b.base))
+  const missing = [...node.missing].sort((a, b) => a.base.localeCompare(b.base))
+
+  return (
+    <>
+      {dirNames.map((name) => {
+        const childPath = path ? `${path}/${name}` : name
+        const child = node.dirs.get(name)
+        const open = openDirs[childPath] !== false
+        return (
+          <React.Fragment key={childPath}>
+            <FolderRow name={name} open={open} onToggle={() => toggleDir(childPath)} hasMissing={subtreeHasMissing(child)} depth={depth} />
+            {open && <TreeLevel node={child} path={childPath} depth={depth + 1} openDirs={openDirs} toggleDir={toggleDir} ctx={ctx} />}
+          </React.Fragment>
+        )
+      })}
+      {files.map(({ file, status, base }) => (
+        <FileRow
+          key={file.id}
+          file={file}
+          status={status}
+          rel={base}
+          depth={depth}
+          active={ctx.activeId === file.id}
+          onSwitch={() => ctx.onSwitch(file.id)}
+          onRemove={() => ctx.onRemove(file.id)}
+          onRename={(newBase) => ctx.onRename(file.id, joinPath(dirOf(file.name), newBase))}
+          hasError={!!ctx.fileErrors[file.id]}
+          onDragStart={() => ctx.setDragId(file.id)}
+          onDragOver={() => ctx.setOverId(file.id)}
+          onDrop={() => ctx.commitDrop(file.id)}
+          isDragOver={ctx.overId === file.id && ctx.dragId !== file.id}
+        />
+      ))}
+      {missing.map(({ item, base }) => (
+        <MissingRow key={item.filename} item={item} rel={base} depth={depth} onAdd={() => ctx.onAddNamed(item.filename)} />
+      ))}
+    </>
+  )
+}
+
 /* ─── main export ────────────────────────────────────────── */
 
 /**
  * Full-height sidebar to the left of the editor.
  * - Drag the right edge to resize.
  * - Click the chevron to collapse to a thin strip.
- * - Files with a '/' in their name are grouped under a collapsible folder.
+ * - Files are grouped into a nested, collapsible folder tree by their path.
  */
 export default function FileExplorer({
   files,
@@ -222,7 +277,7 @@ export default function FileExplorer({
   isMobile = false,
 }) {
   const [collapsed, setCollapsed] = useState(false)
-  const [width, setWidth] = useState(120)
+  const [width, setWidth] = useState(140)
   const [openDirs, setOpenDirs] = useState({})
   const [dragId, setDragId] = useState(null)   // id being dragged
   const [overId, setOverId] = useState(null)   // id being hovered over
@@ -231,24 +286,33 @@ export default function FileExplorer({
   const dragStartW = useRef(0)
 
   const mainFile = files[0]
-  const extraFiles = files.slice(1)
+  const extraFiles = useMemo(() => files.slice(1), [files])
 
   const statuses = useMemo(() => buildStatusMap(extraFiles, nodes), [extraFiles, nodes])
   const missingRefs = useMemo(() => buildMissingRefs(extraFiles, nodes), [extraFiles, nodes])
   const tree = useMemo(() => buildTree(extraFiles, statuses, missingRefs), [extraFiles, statuses, missingRefs])
 
-  const toggleDir = useCallback((name) => {
-    setOpenDirs((prev) => ({ ...prev, [name]: prev[name] === false }))
+  const toggleDir = useCallback((path) => {
+    setOpenDirs((prev) => ({ ...prev, [path]: prev[path] === false }))
   }, [])
 
-  // Auto-open any folder that contains an unresolved missing ref
+  // Auto-open every ancestor folder that contains an unresolved missing ref
   useEffect(() => {
     const toOpen = {}
     missingRefs.forEach((item) => {
-      const i = item.filename.indexOf('/')
-      if (i !== -1) toOpen[item.filename.slice(0, i)] = true
+      const parts = item.filename.split('/')
+      parts.pop()
+      let acc = ''
+      for (const p of parts) { acc = acc ? `${acc}/${p}` : p; toOpen[acc] = true }
     })
-    if (Object.keys(toOpen).length) setOpenDirs((prev) => ({ ...prev, ...toOpen }))
+    setOpenDirs((prev) => {
+      let changed = false
+      const next = { ...prev }
+      for (const key of Object.keys(toOpen)) {
+        if (next[key] !== true) { next[key] = true; changed = true }
+      }
+      return changed ? next : prev
+    })
   }, [missingRefs])
 
   const commitDrop = useCallback((targetId) => {
@@ -258,6 +322,11 @@ export default function FileExplorer({
     setOverId(null)
   }, [dragId, onReorder])
 
+  const treeCtx = useMemo(() => ({
+    activeId, onSwitch, onRemove, onRename, onAddNamed, fileErrors,
+    setDragId, setOverId, commitDrop, dragId, overId,
+  }), [activeId, onSwitch, onRemove, onRename, onAddNamed, fileErrors, commitDrop, dragId, overId])
+
   const onResizeStart = useCallback((e) => {
     e.preventDefault()
     isResizing.current = true
@@ -265,7 +334,7 @@ export default function FileExplorer({
     dragStartW.current = width
     const onMove = (mv) => {
       if (!isResizing.current) return
-      setWidth(Math.max(80, Math.min(260, dragStartW.current + mv.clientX - dragStartX.current)))
+      setWidth(Math.max(80, Math.min(320, dragStartW.current + mv.clientX - dragStartX.current)))
     }
     const onUp = () => {
       isResizing.current = false
@@ -310,6 +379,7 @@ export default function FileExplorer({
                           ? 'border-teal-800 bg-teal-950/30 text-teal-300'
                           : 'border-slate-700 bg-slate-900 text-slate-400'
                   }`}
+                  title={file.name}
                 >
                   {file.name}
                 </button>
@@ -375,86 +445,7 @@ export default function FileExplorer({
       <div className="flex-1 overflow-y-auto overflow-x-hidden">
         <MainRow active={activeId === mainFile.id} onSwitch={() => onSwitch(mainFile.id)} />
 
-        {tree.map((node) => {
-          if (node.kind === 'file') {
-            return (
-              <FileRow
-                key={node.file.id}
-                file={node.file}
-                status={node.status}
-                rel={node.rel}
-                active={activeId === node.file.id}
-                onSwitch={() => onSwitch(node.file.id)}
-                onRemove={() => onRemove(node.file.id)}
-                onRename={(newRel) => onRename(node.file.id, newRel)}
-                hasError={!!fileErrors[node.file.id]}
-                onDragStart={() => setDragId(node.file.id)}
-                onDragOver={() => setOverId(node.file.id)}
-                onDrop={() => commitDrop(node.file.id)}
-                isDragOver={overId === node.file.id && dragId !== node.file.id}
-              />
-            )
-          }
-          if (node.kind === 'missing') {
-            return (
-              <MissingRow
-                key={node.item.filename}
-                item={node.item}
-                rel={node.rel}
-                onAdd={() => onAddNamed(node.item.filename)}
-              />
-            )
-          }
-          if (node.kind === 'dir') {
-            const isOpen = openDirs[node.name] !== false
-            const hasMissing = node.children.some((c) => c.kind === 'missing')
-            return (
-              <React.Fragment key={node.name}>
-                <FolderRow
-                  name={node.name}
-                  open={isOpen}
-                  onToggle={() => toggleDir(node.name)}
-                  hasMissing={hasMissing}
-                />
-                {isOpen && node.children.map((child) => {
-                  if (child.kind === 'file') {
-                    return (
-                      <FileRow
-                        key={child.file.id}
-                        file={child.file}
-                        status={child.status}
-                        rel={child.rel}
-                        active={activeId === child.file.id}
-                        onSwitch={() => onSwitch(child.file.id)}
-                        onRemove={() => onRemove(child.file.id)}
-                        onRename={(newRel) => onRename(child.file.id, `${node.name}/${newRel}`)}
-                        indent
-                        hasError={!!fileErrors[child.file.id]}
-                        onDragStart={() => setDragId(child.file.id)}
-                        onDragOver={() => setOverId(child.file.id)}
-                        onDrop={() => commitDrop(child.file.id)}
-                        isDragOver={overId === child.file.id && dragId !== child.file.id}
-                      />
-                    )
-                  }
-                  if (child.kind === 'missing') {
-                    return (
-                      <MissingRow
-                        key={child.item.filename}
-                        item={child.item}
-                        rel={child.rel}
-                        onAdd={() => onAddNamed(child.item.filename)}
-                        indent
-                      />
-                    )
-                  }
-                  return null
-                })}
-              </React.Fragment>
-            )
-          }
-          return null
-        })}
+        <TreeLevel node={tree} path="" depth={0} openDirs={openDirs} toggleDir={toggleDir} ctx={treeCtx} />
 
         <button
           onClick={onAdd}
