@@ -41,7 +41,7 @@ import {
   Share2, AlertCircle, RotateCcw, BookOpen,
   ClipboardPaste, Layers, Zap, FileCode,
   FlaskConical, Variable, FlaskRound, HelpCircle, Info,
-  GitBranch, Network, MoreVertical,
+  GitBranch, Network, MoreVertical, Loader2,
 } from 'lucide-react'
 
 const MODE_PATHS = {
@@ -687,7 +687,7 @@ export default function App() {
     if (newFiles.length > 0) setActiveFileId(newFiles[newFiles.length - 1].id)
   }, [loadDroppedFiles])
 
-  const { isDragging, dropProps } = useFileDrop(handleDropFiles)
+  const { isDragging, isProcessing: isProcessingResolveDrop, error: resolveDropError, dropProps } = useFileDrop(handleDropFiles)
 
   // Language for the Monaco editor — depends on mode and active file extension
   const editorLanguage = useMemo(() => {
@@ -1059,6 +1059,8 @@ export default function App() {
                   onAddFiles={handleDropFiles}
                   dropProps={dropProps}
                   isDragging={isDragging}
+                  isProcessing={isProcessingResolveDrop}
+                  dropError={resolveDropError}
                 />
               </div>
             )}
@@ -1196,17 +1198,28 @@ function LandingScreen({
   onOpenAbout,
 }) {
   const [dragOver, setDragOver] = useState(false)
+  const [isProcessingDrop, setIsProcessingDrop] = useState(false)
+  const [dropError, setDropError] = useState(null)
   const dropRef = useRef(null)
 
   const handleDrop = useCallback(async (e) => {
     e.preventDefault()
     setDragOver(false)
+    setDropError(null)
     // Extract dropped folder/zip/files (paths preserved) and let the router
     // decide where to go. Fall back to plain-text drag.
-    const files = await readDataTransferFiles(e.dataTransfer)
-    if (files.length > 0) { onDropFiles(files); return }
-    const text = e.dataTransfer?.getData('text/plain')
-    if (text) onPaste(text)
+    setIsProcessingDrop(true)
+    try {
+      const files = await readDataTransferFiles(e.dataTransfer)
+      if (files.length > 0) { onDropFiles(files); return }
+      const text = e.dataTransfer?.getData('text/plain')
+      if (text) { onPaste(text); return }
+      setDropError('No readable files found — check the archive isn\'t corrupt or empty.')
+    } catch (err) {
+      setDropError(`Couldn't read that drop: ${err.message || err}`)
+    } finally {
+      setIsProcessingDrop(false)
+    }
   }, [onDropFiles, onPaste])
 
   const handleDragLeave = useCallback((e) => {
@@ -1242,16 +1255,32 @@ function LandingScreen({
             : 'border-slate-700 hover:border-slate-600'
           }`}
       >
-        <ClipboardPaste size={36} className="text-slate-600" />
+        {isProcessingDrop ? (
+          <Loader2 size={36} className="text-cyan-400 animate-spin" />
+        ) : (
+          <ClipboardPaste size={36} className="text-slate-600" />
+        )}
         <div className="text-center">
-          <p className="text-white font-mono text-lg font-semibold flex items-center justify-center gap-1.5">
-            <span>Press</span>
-            <kbd className="inline-block px-2 py-0.5 rounded bg-slate-800 border border-slate-600 text-cyan-400 text-sm font-mono mx-1">Ctrl+V</kbd>
-            <span>to paste</span>
-          </p>
-          <p className="text-slate-500 text-xs font-mono mt-1">
-            or drag & drop your YAML, task snippet, or Jinja2 expression
-          </p>
+          {isProcessingDrop ? (
+            <p className="text-cyan-300 font-mono text-sm">Reading project files…</p>
+          ) : (
+            <>
+              <p className="text-white font-mono text-lg font-semibold flex items-center justify-center gap-1.5">
+                <span>Press</span>
+                <kbd className="inline-block px-2 py-0.5 rounded bg-slate-800 border border-slate-600 text-cyan-400 text-sm font-mono mx-1">Ctrl+V</kbd>
+                <span>to paste</span>
+              </p>
+              <p className="text-slate-500 text-xs font-mono mt-1">
+                or drag & drop your YAML, task snippet, project folder, or .zip
+              </p>
+            </>
+          )}
+          {dropError && (
+            <p className="text-red-400 font-mono text-xs mt-2 flex items-center justify-center gap-1.5 max-w-md">
+              <AlertCircle size={12} className="shrink-0" />
+              {dropError}
+            </p>
+          )}
         </div>
 
         <div className="flex items-center gap-3 w-full max-w-xs">

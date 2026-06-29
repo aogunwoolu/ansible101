@@ -16,10 +16,19 @@
 import { useState, useCallback } from 'react'
 import JSZip from 'jszip'
 
-// Extensions we treat as binary and skip
-const BINARY_EXT = /\.(png|jpe?g|gif|bmp|ico|webp|pdf|exe|bin|zip|tar|gz|bz2|rar|7z|mp[34]|wav|avi|mov|mkv|ttf|woff2?|eot|otf|so|dylib|dll|class|pyc)$/i
+// Extensions we treat as binary and skip. Ansible repos commonly vendor
+// offline-install artifacts (rpm/deb/iso/sqlite/...) in roles/*/files/ —
+// those are exactly the multi-hundred-MB blobs that make "big repo" zips
+// look broken when decoded as UTF-8 text, so they need to be on this list too.
+const BINARY_EXT = /\.(png|jpe?g|gif|bmp|ico|webp|svg|pdf|exe|bin|zip|tar|gz|tgz|bz2|xz|zst|lz4|rar|7z|mp[34]|wav|avi|mov|mkv|ttf|woff2?|eot|otf|so|dylib|dll|class|pyc|rpm|deb|jar|war|ear|whl|iso|img|vmdk|vdi|qcow2?|ova|sqlite3?|db|msi|pkg|dmg|appimage|snap)$/i
+
+// Anything bigger than this isn't realistic Ansible source (YAML/INI/Jinja2) —
+// treat it as an opaque artifact instead of decoding it as text, which is what
+// was hanging/crashing the tab on large vendored repos.
+const MAX_TEXT_FILE_BYTES = 5 * 1024 * 1024
 
 function isBinary(name) { return BINARY_EXT.test(name) }
+function isTooLarge(size) { return typeof size === 'number' && size > MAX_TEXT_FILE_BYTES }
 
 // OS/archive cruft we never want in the virtual file tree
 function isJunk(path) {
@@ -39,9 +48,12 @@ function readEntry(entry, prefix = '') {
       const fullPath = prefix + entry.name
       if (isBinary(fullPath) || isJunk(fullPath)) { resolve([]); return }
       entry.file(
-        (file) => file.text()
-          .then((content) => resolve([{ name: fullPath, content }]))
-          .catch(() => resolve([])),
+        (file) => {
+          if (isTooLarge(file.size)) { resolve([]); return }
+          file.text()
+            .then((content) => resolve([{ name: fullPath, content }]))
+            .catch(() => resolve([]))
+        },
         () => resolve([]),
       )
       return
@@ -81,11 +93,18 @@ async function readZip(file) {
       (f) => !f.dir && !isBinary(f.name) && !isJunk(f.name),
     )
     for (const entry of entries) {
-      const content = await entry.async('string')
+      // Decompress to bytes first so we can bail on oversized entries before
+      // paying for a UTF-8 string decode (the part that hangs the tab).
+      const bytes = await entry.async('uint8array')
+      if (isTooLarge(bytes.byteLength)) continue
+      const content = new TextDecoder().decode(bytes)
       if (entry.name) out.push({ name: entry.name, content }) // keep full path
     }
-  } catch {
-    // ignore corrupt zips
+  } catch (err) {
+    // Surface the failure so callers can tell "empty zip" apart from
+    // "extraction blew up" — large/corrupt archives were previously silent.
+    console.error('readZip failed:', err)
+    throw err
   }
   return out
 }
@@ -130,7 +149,7 @@ export async function readDataTransferFiles(dataTransfer) {
   } else {
     for (const f of plainFiles) {
       if (f.name.toLowerCase().endsWith('.zip')) results.push(...await readZip(f))
-      else if (!isBinary(f.name) && !isJunk(f.name)) {
+      else if (!isBinary(f.name) && !isJunk(f.name) && !isTooLarge(f.size)) {
         results.push({ name: f.name, content: await f.text() })
       }
     }
@@ -143,6 +162,8 @@ export async function readDataTransferFiles(dataTransfer) {
  */
 export function useFileDrop(onFiles) {
   const [isDragging, setIsDragging] = useState(false)
+  const [isProcessing, setIsProcessing] = useState(false)
+  const [error, setError] = useState(null)
 
   const onDragOver = useCallback((e) => {
     e.preventDefault()
@@ -159,12 +180,23 @@ export function useFileDrop(onFiles) {
     e.preventDefault()
     e.stopPropagation()
     setIsDragging(false)
-    const results = await readDataTransferFiles(e.dataTransfer)
-    if (results.length > 0) onFiles(results)
+    setError(null)
+    setIsProcessing(true)
+    try {
+      const results = await readDataTransferFiles(e.dataTransfer)
+      if (results.length > 0) onFiles(results)
+      else setError('No readable files found — check the archive isn\'t corrupt or empty.')
+    } catch (err) {
+      setError(`Couldn't read that drop: ${err.message || err}`)
+    } finally {
+      setIsProcessing(false)
+    }
   }, [onFiles])
 
   return {
     isDragging,
+    isProcessing,
+    error,
     dropProps: { onDragOver, onDragLeave, onDrop },
   }
 }
@@ -178,7 +210,7 @@ export async function readFolderInput(fileList) {
   const out = []
   for (const f of files) {
     const path = f.webkitRelativePath || f.name
-    if (isBinary(path) || isJunk(path)) continue
+    if (isBinary(path) || isJunk(path) || isTooLarge(f.size)) continue
     out.push({ name: path, content: await f.text() })
   }
   return stripCommonRoot(out)

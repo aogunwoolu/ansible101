@@ -13,7 +13,7 @@ import React, { useState, useMemo, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import {
   FolderInput, Server, Layers, Users, Filter, Variable,
-  ArrowRightLeft, Zap, AlertTriangle, ChevronRight, X, ExternalLink,
+  ArrowRightLeft, Zap, AlertTriangle, ChevronRight, X, ExternalLink, Loader2,
 } from 'lucide-react'
 import { buildProjectModel, parseYamlSafe } from '../lib/projectModel'
 import { parseInventoryText } from '../lib/parseInventory'
@@ -102,7 +102,7 @@ function loadResolverState() {
   try { return JSON.parse(globalThis.localStorage.getItem(LS_RESOLVER)) || {} } catch { return {} }
 }
 
-export default function ResolveView({ mainPlaybook = '', mainName = 'playbook.yml', extraFiles = [], facts = {}, onFactsChange, onUseInFlow, onOpenInJinja2, onAddFiles, dropProps = {}, isDragging = false }) {
+export default function ResolveView({ mainPlaybook = '', mainName = 'playbook.yml', extraFiles = [], facts = {}, onFactsChange, onUseInFlow, onOpenInJinja2, onAddFiles, dropProps = {}, isDragging = false, isProcessing = false, dropError = null }) {
   const persisted = useMemo(() => loadResolverState(), [])
   // The Resolve and Flow tabs share the same content: the main editor buffer
   // (mainPlaybook) plus any dropped project files. Extra files take precedence
@@ -238,13 +238,25 @@ export default function ResolveView({ mainPlaybook = '', mainName = 'playbook.ym
         {...dropProps}
         className={`flex h-full flex-col items-center justify-center gap-5 px-6 text-center transition-colors ${isDragging ? 'bg-cyan-950/30' : ''}`}
       >
-        <FolderInput size={40} className="text-slate-600" />
+        {isProcessing ? (
+          <Loader2 size={40} className="text-cyan-400 animate-spin" />
+        ) : (
+          <FolderInput size={40} className="text-slate-600" />
+        )}
         <div>
-          <p className="text-slate-300 font-mono text-sm">Drop an Ansible project folder</p>
+          <p className="text-slate-300 font-mono text-sm">
+            {isProcessing ? 'Reading project files…' : 'Drop an Ansible project folder'}
+          </p>
           <p className="text-slate-500 font-mono text-[11px] mt-1 max-w-md">
             inventory · group_vars/ · host_vars/ · roles/ · vendored collections — structure is preserved
             so every variable resolves through Ansible precedence.
           </p>
+          {dropError && (
+            <p className="text-red-400 font-mono text-[11px] mt-2 flex items-center justify-center gap-1.5">
+              <AlertTriangle size={12} className="shrink-0" />
+              {dropError}
+            </p>
+          )}
         </div>
         <label className="cursor-pointer flex items-center gap-2 px-4 py-2 rounded-lg border border-cyan-700 bg-cyan-950/40 hover:bg-cyan-950/70 hover:border-cyan-500 text-cyan-300 text-sm font-mono transition-all">
           <FolderInput size={14} />
