@@ -54,11 +54,22 @@ function buildStatusMap(extraFiles, nodes) {
     // Non-YAML files have no Ansible relationship — mark as 'other' (neutral display)
     if (!/\.(ya?ml)$/i.test(f.name)) { result[f.id] = 'other'; return }
     if (resolvedLabels.has(f.name)) { result[f.id] = 'resolved'; return }
-    const m = f.name.match(/^roles\/(.+?)\/tasks\/main\.yml$/)
+    // Role tasks files can live under any directory's roles/ — not just the
+    // project root — since Ansible looks for roles/ next to the playbook
+    // that declares them (see parseYamlToFlow's role resolution).
+    const m = f.name.match(/(?:^|\/)roles\/(.+?)\/tasks\/main\.yml$/)
     if (m && resolvedLabels.has(`role: ${m[1]}`)) { result[f.id] = 'resolved'; return }
     result[f.id] = 'unused'
   })
   return result
+}
+
+/** Same convention as parseYamlToFlow's role lookup: a role declared in a
+ *  playbook under a subdirectory is expected at <that dir>/roles/<name>/…,
+ *  not necessarily at the project root. */
+function roleFilePath(roleName, sourceFile) {
+  const dir = sourceFile?.includes('/') ? sourceFile.slice(0, sourceFile.lastIndexOf('/')) : ''
+  return dir ? `${dir}/roles/${roleName}/tasks/main.yml` : `roles/${roleName}/tasks/main.yml`
 }
 
 function buildMissingRefs(extraFiles, nodes) {
@@ -73,11 +84,12 @@ function buildMissingRefs(extraFiles, nodes) {
     // "{{ ansible_os_family }}.yml", which is never correct.
     if (n.data?.dynamic) return
     const label = n.data?.label
-    if (!label || seen.has(label)) return
-    seen.add(label)
+    if (!label) return
     const filename = label.startsWith('role: ')
-      ? `roles/${label.slice(6)}/tasks/main.yml`
+      ? roleFilePath(label.slice(6), n.data?.sourceFile)
       : label
+    if (seen.has(filename)) return
+    seen.add(filename)
     if (!known.has(filename)) {
       out.push({
         label,

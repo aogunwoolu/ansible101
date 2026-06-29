@@ -167,12 +167,35 @@ const MODE_META = {
   limits:   { label: 'Limits',   Icon: FlaskRound,   color: 'text-emerald-400' },
 }
 
+// Shown for the brief window where we don't yet know whether to render the
+// sample/landing default or a session that overflowed localStorage and is
+// being recovered from IndexedDB (see the `checkingSession` effect) — avoids
+// flashing the sample playbook right before replacing it.
+function SessionLoadingSkeleton() {
+  return (
+    <div className="h-screen w-screen flex items-center justify-center bg-slate-950">
+      <div className="flex items-center gap-2 text-slate-500 text-xs font-mono">
+        <Loader2 size={14} className="animate-spin text-cyan-500" />
+        Loading session…
+      </div>
+    </div>
+  )
+}
+
 export default function App() {
   const urlState = useMemo(() => loadFromUrl(), [])
   const initialMode = useMemo(() => getModeFromLocation(urlState), [urlState])
   const [isMobile, setIsMobile] = useState(() => globalThis.innerWidth < 768)
 
   const [mode, setMode] = useState(initialMode)
+
+  // True only when there's nothing to show synchronously yet (no shared hash,
+  // no localStorage session) — i.e. exactly the case where we're about to
+  // render SAMPLE_YAML/landing and might have to immediately replace it with
+  // a session that overflowed localStorage and is waiting in IndexedDB (see
+  // the fallback-check effect below). Renders a loading skeleton instead of
+  // the sample for that brief window, instead of flashing the sample first.
+  const [checkingSession, setCheckingSession] = useState(() => !urlState)
 
   // ── Per-mode independent text buffers ─────────────────────────
   // A restored session (even a project-only import with no root playbook
@@ -295,15 +318,18 @@ export default function App() {
     if (urlState?.fromHash) return
     let cancelled = false
     loadFallbackFromIndexedDb().then((fallback) => {
-      if (cancelled || !fallback) return
-      const hydratedMode = getModeFromLocation(fallback)
-      setMode(hydratedMode)
-      const contentMode = hydratedMode === 'landing' ? getContentModeFromState(fallback) : hydratedMode
-      setTexts((prev) => ({ ...prev, [contentMode]: fallback.yaml ?? '' }))
-      if (fallback.facts) setFacts(fallback.facts)
-      setExtraFiles(normaliseExtraFiles(fallback.extraFiles))
-      setMainPath(fallback.mainPath ?? 'playbook.yml')
-      setActiveFileId('main')
+      if (cancelled) return
+      if (fallback) {
+        const hydratedMode = getModeFromLocation(fallback)
+        setMode(hydratedMode)
+        const contentMode = hydratedMode === 'landing' ? getContentModeFromState(fallback) : hydratedMode
+        setTexts((prev) => ({ ...prev, [contentMode]: fallback.yaml ?? '' }))
+        if (fallback.facts) setFacts(fallback.facts)
+        setExtraFiles(normaliseExtraFiles(fallback.extraFiles))
+        setMainPath(fallback.mainPath ?? 'playbook.yml')
+        setActiveFileId('main')
+      }
+      setCheckingSession(false)
     })
     return () => { cancelled = true }
   }, [urlState])
@@ -947,6 +973,10 @@ export default function App() {
       setExtraFiles((prev) => prev.map((f) => (f.id === activeFileId ? { ...f, content: v ?? '' } : f)))
     }
   }, [mode, activeFileId, setCurrentText])
+
+  if (checkingSession) {
+    return <SessionLoadingSkeleton />
+  }
 
   if (mode === 'landing') {
     return (

@@ -91,6 +91,43 @@ function isTemplated(value) {
   return typeof value === 'string' && /\{[{%]/.test(value)
 }
 
+function dirnameOf(path) {
+  if (!path) return ''
+  const idx = path.lastIndexOf('/')
+  return idx === -1 ? '' : path.slice(0, idx)
+}
+
+/** Join a base directory with a relative path, resolving `./` and `../`. */
+function joinRelative(dir, rel) {
+  const combined = dir ? `${dir}/${rel}` : rel
+  const out = []
+  for (const seg of combined.split('/')) {
+    if (seg === '' || seg === '.') continue
+    if (seg === '..') out.pop()
+    else out.push(seg)
+  }
+  return out.join('/')
+}
+
+/**
+ * Resolve an include/role target the way Ansible actually does: relative to
+ * the directory of the file that *contains* the reference first (e.g.
+ * `adhoc/rolling_restart.yml` doing `include_tasks: handlers/x.yml` resolves
+ * to `adhoc/handlers/x.yml`), then falling back to the path taken literally
+ * from the project root (how it'd resolve if `sourceFile` were at the root).
+ * Returns the matching fileRegistry key, or null if neither resolves.
+ */
+function resolveFileRef(ref, sourceFile, fileRegistry) {
+  if (!ref || isTemplated(ref)) return null
+  const dir = dirnameOf(sourceFile)
+  if (dir) {
+    const nested = joinRelative(dir, ref)
+    if (fileRegistry[nested]) return nested
+  }
+  if (fileRegistry[ref]) return ref
+  return null
+}
+
 const GROUP_PAD = 14  // padding around grouped child tasks
 
 function getVisualNodeWidth(node) {
@@ -150,7 +187,11 @@ function processTaskList(tasks, nodes, edges, prevId, globalY, ctx, depth = 0) {
       // Support string shorthand and {file:} / {name:} dict forms
       const filename = typeof rawVal === 'string' ? rawVal
         : (rawVal?.file ?? rawVal?.name ?? String(rawVal))
-      const resolvedTasks = filename ? fileRegistry[filename] : null
+      // Ansible resolves include_tasks/import_tasks relative to the directory
+      // of the file containing the reference before trying it as a literal
+      // project-root path — see resolveFileRef.
+      const resolvedFilename = filename ? resolveFileRef(filename, sourceFile, fileRegistry) : null
+      const resolvedTasks = resolvedFilename ? fileRegistry[resolvedFilename] : null
 
       if (resolvedTasks && depth < 2) {
         // --- Resolved include: group header + background container ---
@@ -167,7 +208,7 @@ function processTaskList(tasks, nodes, edges, prevId, globalY, ctx, depth = 0) {
         const tempEdges = []
         const res = processTaskList(
           resolvedTasks, tempNodes, tempEdges, incId, childStartY,
-          { ...ctx, xOffset: childXOffset, stage: myStage, sourceFile: filename }, depth + 1
+          { ...ctx, xOffset: childXOffset, stage: myStage, sourceFile: resolvedFilename }, depth + 1
         )
         const childEndY = res.globalY
 
@@ -187,7 +228,7 @@ function processTaskList(tasks, nodes, edges, prevId, globalY, ctx, depth = 0) {
           type: 'includeNode',
           position: { x: bgX, y: headerY },
           style: { width: bgWidth },
-          data: { label: filename, taskCount: resolvedTasks.length, stage: myStage },
+          data: { label: resolvedFilename, taskCount: resolvedTasks.length, stage: myStage },
         })
         edges.push({ id: `e${prevId}-${incId}`, source: prevId, target: incId })
 
@@ -215,14 +256,19 @@ function processTaskList(tasks, nodes, edges, prevId, globalY, ctx, depth = 0) {
         prevId = res.prevId
         globalY = res.globalY + ROW_GAP  // extra spacing after group
       } else {
-        // Unresolved — placeholder prompting user to add the file
+        // Unresolved — placeholder prompting user to add the file. Suggest
+        // the directory-relative path (what Ansible would actually look for
+        // first) rather than the literal text from the YAML, so "add file"
+        // points at the right place when the reference is itself relative.
         const missId = nextId()
+        const dir = dirnameOf(sourceFile)
+        const suggested = (dir && filename && !isTemplated(filename)) ? joinRelative(dir, filename) : filename
         nodes.push({
           id: missId,
           type: 'missingFileNode',
           position: { x: X, y: globalY },
           data: {
-            label: filename || '(unknown)',
+            label: suggested || '(unknown)',
             kind: includeKey,
             taskName: task.name || null,
             sourceFile: sourceFile || null,
@@ -412,8 +458,13 @@ export function parsePlaybook(plays, rawYaml, facts = {}, fileRegistry = {}, mai
     roles.forEach((roleEntry) => {
       const roleName = typeof roleEntry === 'string' ? roleEntry
         : (roleEntry?.role ?? roleEntry?.name ?? String(roleEntry))
-      const roleFile = `roles/${roleName}/tasks/main.yml`
-      const roleTasks = fileRegistry[roleFile]
+      // Ansible looks for a role's tasks relative to the playbook's own
+      // directory first (e.g. a playbook at adhoc/site.yml checks
+      // adhoc/roles/<name>/tasks/main.yml) before the project-root roles/.
+      const roleFile = isTemplated(roleName) ? null
+        : resolveFileRef(`roles/${roleName}/tasks/main.yml`, ctx.sourceFile, fileRegistry)
+          ?? `roles/${roleName}/tasks/main.yml`
+      const roleTasks = roleFile ? fileRegistry[roleFile] : null
       const myStage = stageRef.value++
 
       if (roleTasks) {
