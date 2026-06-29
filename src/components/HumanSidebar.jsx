@@ -38,6 +38,42 @@ function formatVarValue(value) {
   try { return JSON.stringify(value) } catch { return String(value) }
 }
 
+// `loop_control.loop_var` lets a task rename the per-iteration variable away
+// from the `item` default — the rest of the loop UI needs to know the real
+// name to spot `{{ <loopVar> }}` and `{{ <loopVar>.foo }}` references in the
+// task body.
+function getLoopVarName(task) {
+  return task.loop_control?.loop_var || 'item'
+}
+
+const BARE_VAR_RE = /^\{\{\s*([a-zA-Z_]\w*)\s*\}\}$/
+
+/**
+ * The actual list a loop/with_items will iterate over, resolved as far as
+ * we're able to:
+ *   - a literal YAML list → used as-is
+ *   - `{{ a_single_var }}` → look up that var's resolved value for this host
+ *   - anything else (filters, concatenation, etc.) → can't preview statically
+ * Returns an array, or null if it can't be determined.
+ */
+function resolveLoopItems(loopRaw, resolution) {
+  if (Array.isArray(loopRaw)) return loopRaw
+  if (typeof loopRaw === 'string') {
+    const bareVar = loopRaw.match(BARE_VAR_RE)?.[1]
+    if (bareVar && resolution?.vars[bareVar]) {
+      const value = resolution.vars[bareVar].winner.value
+      if (Array.isArray(value)) return value
+    }
+  }
+  return null
+}
+
+function formatLoopPreview(items, max = 4) {
+  const shown = items.slice(0, max).map((v) => formatVarValue(v))
+  const more = items.length > max ? `, … (${items.length} total)` : ` (${items.length} total)`
+  return shown.join(', ') + more
+}
+
 function contextFromResolution(resolution) {
   const ctx = {}
   if (resolution) for (const [k, info] of Object.entries(resolution.vars)) ctx[k] = info.winner.value
@@ -57,11 +93,17 @@ function tryRenderExpr(expr, resolution) {
 
 const TEMPLATE_EXPR_RE = /\{\{[\s\S]*?\}\}/g
 
+const EXPR_ROOT_VAR_RE = /\{\{[\s-]*([a-zA-Z_]\w*)/
+
 /** Splits explanation text on `{{ ... }}` and annotates each with its
  *  resolved value at this step — "{{ app_port }} → 8080" — instead of
- *  leaving the raw expression to be explained separately below. */
-function annotateTemplates(text, resolution, fullResolution) {
-  if (!text || !resolution) return text
+ *  leaving the raw expression to be explained separately below.
+ *  `loopInfo` (when the task loops) intercepts references to the loop
+ *  variable itself (`{{ item }}`, `{{ item.name }}`, …) — those aren't real
+ *  host vars, so running them through the resolver would always say "never
+ *  resolves"; instead show what the loop actually iterates over. */
+function annotateTemplates(text, resolution, fullResolution, loopInfo) {
+  if (!text || (!resolution && !loopInfo)) return text
   const nodes = []
   let last = 0
   let m
@@ -69,12 +111,16 @@ function annotateTemplates(text, resolution, fullResolution) {
   while ((m = TEMPLATE_EXPR_RE.exec(text)) !== null) {
     if (m.index > last) nodes.push(text.slice(last, m.index))
     const expr = m[0]
-    const atStage = tryRenderExpr(expr, resolution)
-    const atFull = atStage === null ? tryRenderExpr(expr, fullResolution) : null
+    const rootVar = expr.match(EXPR_ROOT_VAR_RE)?.[1]
+    const isLoopVarRef = loopInfo && rootVar === loopInfo.loopVar
+    const atStage = !isLoopVarRef ? tryRenderExpr(expr, resolution) : null
+    const atFull = !isLoopVarRef && atStage === null ? tryRenderExpr(expr, fullResolution) : null
     nodes.push(
       <span key={m.index} className="whitespace-nowrap">
         <span className="text-slate-400">{expr}</span>
-        {atStage !== null ? (
+        {isLoopVarRef ? (
+          <span className="text-violet-300"> → {loopInfo.preview}</span>
+        ) : atStage !== null ? (
           <span className="text-emerald-300"> → {atStage}</span>
         ) : atFull !== null ? (
           <span className="text-orange-400/80 italic"> → not set yet</span>
@@ -169,7 +215,19 @@ function ExplanationCard({
     while ((m = re.exec(text)) !== null) found.add(m[1])
     return found
   }, [text])
-  const footerNames = [...referencedNames].filter((n) => !inlineNames.has(n))
+
+  const loopRaw = task.loop ?? task.with_items
+  const hasLoop = loopRaw !== undefined
+  const loopVar = hasLoop ? getLoopVarName(task) : null
+  const loopItems = hasLoop ? resolveLoopItems(loopRaw, resolution ?? fullResolution) : null
+  const loopInfo = hasLoop
+    ? { loopVar, preview: loopItems ? formatLoopPreview(loopItems) : 'varies per iteration — not statically known' }
+    : null
+
+  // `item` (or a custom loop_control.loop_var) isn't a real host var — it's
+  // resolved per-iteration by loopInfo above, not by the var resolver, so it
+  // shouldn't show up as "never resolves for this host" down in the footer.
+  const footerNames = [...referencedNames].filter((n) => !inlineNames.has(n) && n !== loopVar)
 
   return (
     <div
@@ -190,7 +248,7 @@ function ExplanationCard({
       <div className="flex items-start gap-2">
         <LucideIcon name={icon} size={14} className="text-slate-400 mt-0.5 shrink-0" />
         <p className="text-slate-200 text-xs leading-relaxed">
-          {resolution ? annotateTemplates(text, resolution, fullResolution) : text}
+          {(resolution || loopInfo) ? annotateTemplates(text, resolution, fullResolution, loopInfo) : text}
         </p>
       </div>
       {/* Conditionals */}
@@ -200,11 +258,30 @@ function ExplanationCard({
           <span className="min-w-0 break-all">Condition: <span className="text-amber-300">{Array.isArray(task.when) ? task.when.join(' AND ') : task.when}</span></span>
         </div>
       )}
-      {/* Loops */}
-      {(task.loop || task.with_items) && (
-        <div className="mt-1 flex items-center gap-1 text-violet-400 text-xs font-mono">
-          <RefreshCw size={11} />
-          <span>Loops over {(task.loop || task.with_items).length ?? '?'} item(s).</span>
+      {/* Loops — show the actual items being iterated, not just a count,
+          and name the loop var when it's not the `item` default. */}
+      {hasLoop && (
+        <div className="mt-1 text-violet-400 text-xs font-mono">
+          <div className="flex items-center gap-1">
+            <RefreshCw size={11} />
+            <span>
+              {loopItems
+                ? `Loops over ${loopItems.length} item(s) as {{ ${loopVar} }}:`
+                : `Loops over a dynamically-resolved list as {{ ${loopVar} }} — can't preview items statically.`}
+            </span>
+          </div>
+          {loopItems && (
+            <div className="mt-1 ml-4 flex flex-wrap gap-1">
+              {loopItems.slice(0, 12).map((v, i) => (
+                <span key={i} className="px-1.5 py-0.5 rounded bg-violet-950 border border-violet-800 text-violet-300 text-[10px]">
+                  {formatVarValue(v)}
+                </span>
+              ))}
+              {loopItems.length > 12 && (
+                <span className="px-1.5 py-0.5 text-violet-600 text-[10px]">+{loopItems.length - 12} more</span>
+              )}
+            </div>
+          )}
         </div>
       )}
       {/* Notify */}
@@ -399,6 +476,31 @@ function HostMismatchBanner({ host }) {
 function MissingFileCard({ data }) {
   const filename = data?.label
   const sourceFile = data?.sourceFile
+
+  if (data?.cycle || data?.depthLimited) {
+    return (
+      <div className="rounded border-2 border-dashed border-teal-700 bg-teal-950 p-3 mb-3">
+        <div className="flex items-center gap-2 mb-2">
+          <FileQuestion size={14} className="text-teal-400" />
+          <span className="text-teal-300 text-xs font-mono font-semibold uppercase tracking-wide">
+            {data.cycle ? 'Circular Include' : 'Deeply Nested Include'}
+          </span>
+        </div>
+        <p className="text-slate-300 text-xs leading-relaxed mb-1">
+          {data.cycle
+            ? 'This file is already part of the include chain above it, so expanding it again here would loop forever.'
+            : 'This include chain is nested very deep, so expansion stopped here to keep the diagram from running away.'}{' '}
+          The file itself is already in your workspace — it&apos;s just not redrawn inline:
+        </p>
+        <div className="mt-2 rounded bg-slate-900 border border-teal-800 px-2 py-1.5 font-mono text-teal-300 text-xs break-all select-all">
+          {filename}
+        </div>
+        {sourceFile && (
+          <p className="text-slate-500 text-[10px] mt-2">Referenced from <span className="text-cyan-300 font-mono break-all">{sourceFile}</span>.</p>
+        )}
+      </div>
+    )
+  }
 
   if (data?.dynamic) {
     return (

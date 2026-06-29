@@ -83,6 +83,9 @@ function buildMissingRefs(extraFiles, nodes) {
     // actionable "missing file" just told users to make a file named
     // "{{ ansible_os_family }}.yml", which is never correct.
     if (n.data?.dynamic) return
+    // Cycle/depth-limited nodes mark a file that's already in the workspace
+    // (just not re-expanded inline here) — not actually missing.
+    if (n.data?.cycle || n.data?.depthLimited) return
     const label = n.data?.label
     if (!label) return
     const filename = label.startsWith('role: ')

@@ -158,16 +158,25 @@ function getVisualNodeWidth(node) {
   }
 }
 
+// Real include chains (handlers including handlers including tasks, etc.)
+// can legitimately run many levels deep — only an actual cycle (A includes
+// B includes A) needs to be stopped. This is just a generous backstop for
+// pathological/runaway cases that slip past the visited-file cycle check.
+const MAX_INCLUDE_DEPTH = 24
+
 /**
  * Process a list of tasks, appending nodes/edges.
  * Returns { prevId, globalY } for chaining.
  *
- * ctx: { facts, fileRegistry } — evaluation context.
- * depth: prevents infinite recursion when includes reference each other.
+ * ctx: { facts, fileRegistry, visited } — evaluation context. `visited` is
+ * the set of resolved filenames already expanded along this include chain —
+ * used to detect real cycles (A includes B includes A) without capping
+ * legitimately deep, non-cyclic include/role nesting.
+ * depth: backstop against runaway recursion — see MAX_INCLUDE_DEPTH.
  * xOffset: horizontal shift from X_BASE (used for nested indentation).
  */
 function processTaskList(tasks, nodes, edges, prevId, globalY, ctx, depth = 0) {
-  const { facts, fileRegistry, xOffset = 0, stageRef, stage: inheritedStage, sourceFile } = ctx
+  const { facts, fileRegistry, xOffset = 0, stageRef, stage: inheritedStage, sourceFile, visited } = ctx
   const X = X_BASE + xOffset
 
   tasks.forEach((rawTask) => {
@@ -192,8 +201,9 @@ function processTaskList(tasks, nodes, edges, prevId, globalY, ctx, depth = 0) {
       // project-root path — see resolveFileRef.
       const resolvedFilename = filename ? resolveFileRef(filename, sourceFile, fileRegistry) : null
       const resolvedTasks = resolvedFilename ? fileRegistry[resolvedFilename] : null
+      const isCycle = resolvedFilename != null && visited?.has(resolvedFilename)
 
-      if (resolvedTasks && depth < 2) {
+      if (resolvedTasks && !isCycle && depth < MAX_INCLUDE_DEPTH) {
         // --- Resolved include: group header + background container ---
         globalY += ROW_GAP  // extra spacing before group
         const groupWidth = TASK_WIDTH + GROUP_PAD * 2
@@ -208,7 +218,14 @@ function processTaskList(tasks, nodes, edges, prevId, globalY, ctx, depth = 0) {
         const tempEdges = []
         const res = processTaskList(
           resolvedTasks, tempNodes, tempEdges, incId, childStartY,
-          { ...ctx, xOffset: childXOffset, stage: myStage, sourceFile: resolvedFilename }, depth + 1
+          {
+            ...ctx,
+            xOffset: childXOffset,
+            stage: myStage,
+            sourceFile: resolvedFilename,
+            visited: new Set(visited).add(resolvedFilename),
+          },
+          depth + 1
         )
         const childEndY = res.globalY
 
@@ -255,11 +272,35 @@ function processTaskList(tasks, nodes, edges, prevId, globalY, ctx, depth = 0) {
 
         prevId = res.prevId
         globalY = res.globalY + ROW_GAP  // extra spacing after group
+      } else if (resolvedTasks) {
+        // File exists and resolved fine, but expanding it here would either
+        // recurse forever (isCycle: A includes B includes A) or run past the
+        // runaway-recursion backstop — show that distinctly from "missing"
+        // so users don't think their upload is incomplete.
+        const missId = nextId()
+        nodes.push({
+          id: missId,
+          type: 'missingFileNode',
+          position: { x: X, y: globalY },
+          data: {
+            label: resolvedFilename,
+            kind: includeKey,
+            taskName: task.name || null,
+            sourceFile: sourceFile || null,
+            cycle: isCycle,
+            depthLimited: !isCycle,
+            stage: myStage,
+          },
+        })
+        edges.push({ id: `e${prevId}-${missId}`, source: prevId, target: missId })
+        globalY += TASK_HEIGHT + ROW_GAP
+        prevId = missId
       } else {
-        // Unresolved — placeholder prompting user to add the file. Suggest
-        // the directory-relative path (what Ansible would actually look for
-        // first) rather than the literal text from the YAML, so "add file"
-        // points at the right place when the reference is itself relative.
+        // Genuinely unresolved — placeholder prompting user to add the file.
+        // Suggest the directory-relative path (what Ansible would actually
+        // look for first) rather than the literal text from the YAML, so
+        // "add file" points at the right place when the reference itself
+        // is relative.
         const missId = nextId()
         const dir = dirnameOf(sourceFile)
         const suggested = (dir && filename && !isTemplated(filename)) ? joinRelative(dir, filename) : filename
@@ -433,7 +474,7 @@ export function parsePlaybook(plays, rawYaml, facts = {}, fileRegistry = {}, mai
   // One incrementing counter for the whole playbook — see the module comment
   // above processTaskList on incremental var-resolution staging.
   const stageRef = { value: 0 }
-  const ctx = { facts, fileRegistry, stageRef, sourceFile: mainPath }
+  const ctx = { facts, fileRegistry, stageRef, sourceFile: mainPath, visited: new Set() }
 
   if (!Array.isArray(plays)) return { nodes, edges, lineMap }
 
@@ -481,7 +522,7 @@ export function parsePlaybook(plays, rawYaml, facts = {}, fileRegistry = {}, mai
         const tempEdges = []
         const res = processTaskList(
           roleTasks, tempNodes, tempEdges, roleId, childStartY,
-          { ...ctx, xOffset: childXOffset, stage: myStage, sourceFile: roleFile }, 1
+          { ...ctx, xOffset: childXOffset, stage: myStage, sourceFile: roleFile, visited: new Set(ctx.visited).add(roleFile) }, 1
         )
         const childEndY = res.globalY
 

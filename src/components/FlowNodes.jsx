@@ -105,6 +105,8 @@ export function TaskNode({ data, selected }) {
 // Loop Node — task with a "repeat" badge
 // ────────────────────────────────────────────────────────────────
 export function LoopNode({ data, selected }) {
+  const loopRaw = data.task?.loop ?? data.task?.with_items
+  const loopCount = Array.isArray(loopRaw) ? loopRaw.length : null
   return (
     <div
       className={`rounded border-2 px-3 py-2 min-w-[200px] max-w-[260px] shadow transition-all
@@ -124,7 +126,9 @@ export function LoopNode({ data, selected }) {
       />
       <div className="flex items-center gap-2">
         <RefreshCw size={13} className="text-violet-400" />
-        <span className="text-xs text-violet-400 font-mono">loop</span>
+        <span className="text-xs text-violet-400 font-mono">
+          loop{loopCount !== null ? ` ×${loopCount}` : ''}
+        </span>
       </div>
       <div className="mt-1 text-white text-xs font-mono leading-tight truncate" title={data.label}>
         {data.label}
@@ -325,24 +329,37 @@ export function MissingFileNode({ data, selected }) {
   const parts = data.label ? data.label.split('/') : [data.label]
   const base = parts.pop()
   const dir = parts.length ? parts.join('/') + '/' : ''
+  // Cycle/depth-limited nodes reference a file that's already in the
+  // workspace — it's just not re-expanded inline here — so they get the
+  // resolved-but-collapsed (teal) treatment instead of the "missing" orange.
+  const isResolvedButCollapsed = data.cycle || data.depthLimited
+  const palette = isResolvedButCollapsed
+    ? { border: selected ? 'border-cyan-400 bg-teal-950/60' : 'border-teal-700/70 bg-teal-950/40', icon: 'text-teal-500', dir: 'text-teal-700', label: 'text-teal-300', dot: 'bg-teal-600', text: 'text-teal-700' }
+    : { border: selected ? 'border-cyan-400 bg-orange-950/60' : 'border-orange-700/70 bg-orange-950/40', icon: 'text-orange-500', dir: 'text-orange-700', label: 'text-orange-300', dot: 'bg-orange-600', text: 'text-orange-700' }
+  const footer = data.cycle
+    ? 'circular include — already expanded above'
+    : data.depthLimited
+      ? 'nested too deep to expand further — file is in your workspace'
+      : data.dynamic
+        ? 'computed at runtime — can\'t resolve statically'
+        : 'file not in workspace — add to expand'
   return (
     <div
       style={{ minWidth: 220 }}
-      className={`px-4 py-2.5 rounded border-2 border-dashed font-mono transition-all
-        ${selected ? 'border-cyan-400 bg-orange-950/60' : 'border-orange-700/70 bg-orange-950/40'}`}
+      className={`px-4 py-2.5 rounded border-2 border-dashed font-mono transition-all ${palette.border}`}
     >
       <Handle type="target" position={Position.Top} style={handleStyle} />
       <Handle type="source" position={Position.Bottom} style={handleStyle} />
       <div className="flex items-center gap-2">
-        <FileQuestion size={14} className="text-orange-500 shrink-0" />
+        <FileQuestion size={14} className={`shrink-0 ${palette.icon}`} />
         <div className="flex flex-col min-w-0">
-          {dir && <span className="text-[9px] text-orange-700 leading-none truncate">{dir}</span>}
-          <span className="text-[11px] text-orange-300 font-semibold truncate" title={data.label}>{base}</span>
+          {dir && <span className={`text-[9px] leading-none truncate ${palette.dir}`}>{dir}</span>}
+          <span className={`text-[11px] font-semibold truncate ${palette.label}`} title={data.label}>{base}</span>
         </div>
       </div>
-      <div className="mt-1.5 flex items-center gap-1 text-[9px] text-orange-700">
-        <span className="w-1 h-1 rounded-full bg-orange-600 inline-block" />
-        {data.dynamic ? 'computed at runtime — can\'t resolve statically' : 'file not in workspace — add to expand'}
+      <div className={`mt-1.5 flex items-center gap-1 text-[9px] ${palette.text}`}>
+        <span className={`w-1 h-1 rounded-full inline-block ${palette.dot}`} />
+        {footer}
       </div>
     </div>
   )
