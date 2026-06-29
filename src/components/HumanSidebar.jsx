@@ -340,7 +340,7 @@ export default function HumanSidebar({
 
         {/* Selected node explanation */}
         {selectedNodeType === 'missingFileNode' && (
-          <MissingFileCard filename={selectedNodeData?.label} />
+          <MissingFileCard data={selectedNodeData} />
         )}
         {selectedNodeType === 'includeNode' && (
           <IncludeCard filename={selectedNodeData?.label} />
@@ -396,7 +396,30 @@ function HostMismatchBanner({ host }) {
   )
 }
 
-function MissingFileCard({ filename }) {
+function MissingFileCard({ data }) {
+  const filename = data?.label
+  const sourceFile = data?.sourceFile
+
+  if (data?.dynamic) {
+    return (
+      <div className="rounded border-2 border-dashed border-orange-700 bg-orange-950 p-3 mb-3">
+        <div className="flex items-center gap-2 mb-2">
+          <FileQuestion size={14} className="text-orange-400" />
+          <span className="text-orange-300 text-xs font-mono font-semibold uppercase tracking-wide">Dynamic Include</span>
+        </div>
+        <p className="text-slate-300 text-xs leading-relaxed mb-1">
+          This target is computed from a Jinja2 expression{sourceFile ? <> in <span className="text-cyan-300 font-mono break-all">{sourceFile}</span></> : null}, so it depends on runtime facts/variables and can&apos;t be resolved statically:
+        </p>
+        <div className="mt-2 rounded bg-slate-900 border border-orange-800 px-2 py-1.5 font-mono text-orange-300 text-xs break-all select-all">
+          {filename}
+        </div>
+        <p className="text-slate-500 text-[10px] mt-2">
+          Add the actual file(s) it could resolve to (e.g. one per OS family) so each can be expanded individually.
+        </p>
+      </div>
+    )
+  }
+
   return (
     <div className="rounded border-2 border-dashed border-orange-700 bg-orange-950 p-3 mb-3">
       <div className="flex items-center gap-2 mb-2">
@@ -404,7 +427,8 @@ function MissingFileCard({ filename }) {
         <span className="text-orange-300 text-xs font-mono font-semibold uppercase tracking-wide">Unresolved Include</span>
       </div>
       <p className="text-slate-300 text-xs leading-relaxed mb-3">
-        This task includes an external file that hasn't been added to the workspace yet.
+        This task includes an external file that hasn't been added to the workspace yet
+        {sourceFile ? <> (referenced from <span className="text-cyan-300 font-mono break-all">{sourceFile}</span>)</> : null}.
       </p>
       <div className="rounded bg-slate-900 border border-slate-700 px-3 py-2">
         <div className="text-slate-500 text-[10px] font-mono uppercase tracking-wider mb-1">To expand this node:</div>

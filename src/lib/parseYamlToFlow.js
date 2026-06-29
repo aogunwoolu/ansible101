@@ -83,6 +83,14 @@ export function getModuleName(task) {
   return null
 }
 
+// A Jinja2-templated include/role target (e.g. `{{ ansible_os_family }}.yml`)
+// can't be resolved statically — it depends on runtime facts. Flagging it as
+// a regular "missing file" told users to create a file literally named
+// "{{ ansible_os_family }}.yml", which is never the right move.
+function isTemplated(value) {
+  return typeof value === 'string' && /\{[{%]/.test(value)
+}
+
 const GROUP_PAD = 14  // padding around grouped child tasks
 
 function getVisualNodeWidth(node) {
@@ -122,7 +130,7 @@ function getVisualNodeWidth(node) {
  * xOffset: horizontal shift from X_BASE (used for nested indentation).
  */
 function processTaskList(tasks, nodes, edges, prevId, globalY, ctx, depth = 0) {
-  const { facts, fileRegistry, xOffset = 0, stageRef, stage: inheritedStage } = ctx
+  const { facts, fileRegistry, xOffset = 0, stageRef, stage: inheritedStage, sourceFile } = ctx
   const X = X_BASE + xOffset
 
   tasks.forEach((rawTask) => {
@@ -158,7 +166,8 @@ function processTaskList(tasks, nodes, edges, prevId, globalY, ctx, depth = 0) {
         const tempNodes = []
         const tempEdges = []
         const res = processTaskList(
-          resolvedTasks, tempNodes, tempEdges, incId, childStartY, { ...ctx, xOffset: childXOffset, stage: myStage }, depth + 1
+          resolvedTasks, tempNodes, tempEdges, incId, childStartY,
+          { ...ctx, xOffset: childXOffset, stage: myStage, sourceFile: filename }, depth + 1
         )
         const childEndY = res.globalY
 
@@ -212,7 +221,14 @@ function processTaskList(tasks, nodes, edges, prevId, globalY, ctx, depth = 0) {
           id: missId,
           type: 'missingFileNode',
           position: { x: X, y: globalY },
-          data: { label: filename || '(unknown)', kind: includeKey, taskName: task.name || null, stage: myStage },
+          data: {
+            label: filename || '(unknown)',
+            kind: includeKey,
+            taskName: task.name || null,
+            sourceFile: sourceFile || null,
+            dynamic: isTemplated(filename),
+            stage: myStage,
+          },
         })
         edges.push({ id: `e${prevId}-${missId}`, source: prevId, target: missId })
         globalY += TASK_HEIGHT + ROW_GAP
@@ -363,7 +379,7 @@ function processTaskList(tasks, nodes, edges, prevId, globalY, ctx, depth = 0) {
  *
  * lineMap: Map<nodeId, lineNumber> used for sync-highlight.
  */
-export function parsePlaybook(plays, rawYaml, facts = {}, fileRegistry = {}) {
+export function parsePlaybook(plays, rawYaml, facts = {}, fileRegistry = {}, mainPath = null) {
   nodeId = 0
   const nodes = []
   const edges = []
@@ -371,7 +387,7 @@ export function parsePlaybook(plays, rawYaml, facts = {}, fileRegistry = {}) {
   // One incrementing counter for the whole playbook — see the module comment
   // above processTaskList on incremental var-resolution staging.
   const stageRef = { value: 0 }
-  const ctx = { facts, fileRegistry, stageRef }
+  const ctx = { facts, fileRegistry, stageRef, sourceFile: mainPath }
 
   if (!Array.isArray(plays)) return { nodes, edges, lineMap }
 
@@ -412,7 +428,10 @@ export function parsePlaybook(plays, rawYaml, facts = {}, fileRegistry = {}) {
         // Collect children into temp buffers first (so we can size the background)
         const tempNodes = []
         const tempEdges = []
-        const res = processTaskList(roleTasks, tempNodes, tempEdges, roleId, childStartY, { ...ctx, xOffset: childXOffset, stage: myStage }, 1)
+        const res = processTaskList(
+          roleTasks, tempNodes, tempEdges, roleId, childStartY,
+          { ...ctx, xOffset: childXOffset, stage: myStage, sourceFile: roleFile }, 1
+        )
         const childEndY = res.globalY
 
         const childMinX = tempNodes.length > 0
@@ -460,7 +479,15 @@ export function parsePlaybook(plays, rawYaml, facts = {}, fileRegistry = {}) {
           id: missId,
           type: 'missingFileNode',
           position: { x: X_BASE, y: globalY },
-          data: { label: `role: ${roleName}`, kind: 'role', roleName, playLabel, stage: myStage },
+          data: {
+            label: `role: ${roleName}`,
+            kind: 'role',
+            roleName,
+            playLabel,
+            sourceFile: ctx.sourceFile || null,
+            dynamic: isTemplated(roleName),
+            stage: myStage,
+          },
         })
         edges.push({ id: `e${prevId}-${missId}`, source: prevId, target: missId })
         globalY += TASK_HEIGHT + ROW_GAP

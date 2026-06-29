@@ -175,10 +175,16 @@ export default function App() {
   const [mode, setMode] = useState(initialMode)
 
   // ── Per-mode independent text buffers ─────────────────────────
+  // A restored session (even a project-only import with no root playbook
+  // file, i.e. yaml === '') must win over the sample — only fall back to
+  // SAMPLE_* when there's truly no saved/shared state at all. Checking
+  // `urlState?.yaml` here previously treated "" as falsy and silently
+  // replaced a real (but empty) imported playbook with the sample on every
+  // refresh.
   const [texts, setTexts] = useState(() => ({
-    playbook: initialMode === 'playbook' && urlState?.yaml ? urlState.yaml : SAMPLE_YAML,
-    snippet: initialMode === 'snippet' && urlState?.yaml ? urlState.yaml : SAMPLE_SNIPPET,
-    jinja2: initialMode === 'jinja2' && urlState?.yaml ? urlState.yaml : SAMPLE_JINJA2,
+    playbook: initialMode === 'playbook' && urlState ? (urlState.yaml ?? '') : SAMPLE_YAML,
+    snippet: initialMode === 'snippet' && urlState ? (urlState.yaml ?? '') : SAMPLE_SNIPPET,
+    jinja2: initialMode === 'jinja2' && urlState ? (urlState.yaml ?? '') : SAMPLE_JINJA2,
   }))
 
   const setCurrentText = useCallback((v, forMode) => {
@@ -261,9 +267,7 @@ export default function App() {
     setMode(hydratedMode)
 
     const contentMode = hydratedMode === 'landing' ? getContentModeFromState(urlState) : hydratedMode
-    if (urlState.yaml) {
-      setTexts((prev) => ({ ...prev, [contentMode]: urlState.yaml }))
-    }
+    setTexts((prev) => ({ ...prev, [contentMode]: urlState.yaml ?? '' }))
 
     if (urlState.facts) setFacts(urlState.facts)
     setExtraFiles(normaliseExtraFiles(urlState.extraFiles))
@@ -354,10 +358,10 @@ export default function App() {
       // mode: a shared-link hash, or the playbook session in localStorage.
       // (snippet/jinja keep their in-memory buffers on back/forward.)
       const applies = Boolean(nextState && (nextState.fromHash || nextMode === 'playbook'))
-      if (applies && nextState.yaml) {
+      if (applies) {
         setTexts((prev) => ({
           ...prev,
-          [nextMode === 'landing' ? getContentModeFromState(nextState) : nextMode]: nextState.yaml,
+          [nextMode === 'landing' ? getContentModeFromState(nextState) : nextMode]: nextState.yaml ?? '',
         }))
       }
       if (applies && nextState.facts) setFacts(nextState.facts)
@@ -430,13 +434,13 @@ export default function App() {
       setParseError(null)
       if (!parsed) return { plays: [], nodes: [], edges: [] }
       const arr = Array.isArray(parsed) ? parsed : [parsed]
-      const { nodes, edges } = parsePlaybook(arr, debouncedPlaybook, mergedFacts, fileRegistry)
+      const { nodes, edges } = parsePlaybook(arr, debouncedPlaybook, mergedFacts, fileRegistry, mainPath)
       return { plays: arr, nodes, edges }
     } catch (e) {
       setParseError({ message: e.message, line: e.mark?.line ?? 0, column: e.mark?.column ?? 0 })
       return { plays: [], nodes: [], edges: [] }
     }
-  }, [mode, debouncedPlaybook, debouncedFacts, fileRegistry])
+  }, [mode, debouncedPlaybook, debouncedFacts, fileRegistry, mainPath])
 
   // Parse snippet task (snippet mode)
   const snippetTask = useMemo(() => {

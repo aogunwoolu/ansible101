@@ -342,7 +342,7 @@ export function MissingFileNode({ data, selected }) {
       </div>
       <div className="mt-1.5 flex items-center gap-1 text-[9px] text-orange-700">
         <span className="w-1 h-1 rounded-full bg-orange-600 inline-block" />
-        file not in workspace — add to expand
+        {data.dynamic ? 'computed at runtime — can\'t resolve statically' : 'file not in workspace — add to expand'}
       </div>
     </div>
   )

@@ -7,7 +7,7 @@
  */
 /* eslint-disable react/prop-types */
 import { FolderInput, FileArchive } from 'lucide-react'
-import { readFolderInput, readZip } from '../lib/useFileDrop'
+import { readFolderInput, readZip, stripCommonRoot } from '../lib/useFileDrop'
 
 export default function ImportControls({ onFiles, onError, onBusyChange, className = '' }) {
   const handleFolderPick = async (e) => {
@@ -31,7 +31,7 @@ export default function ImportControls({ onFiles, onError, onBusyChange, classNa
     if (!file) return
     onBusyChange?.(true)
     try {
-      const results = await readZip(file)
+      const results = stripCommonRoot(await readZip(file))
       if (results.length) onFiles?.(results)
       else onError?.('No readable files found — check the archive isn\'t corrupt or empty.')
     } catch (err) {

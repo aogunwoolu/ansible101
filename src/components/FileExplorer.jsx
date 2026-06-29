@@ -33,13 +33,14 @@ function isLowValueFolder(name) {
 
 /** Human-readable explanation of where a missing reference came from. */
 function describeMissingRef(item) {
+  const from = item.sourceFile ? ` (in ${item.sourceFile})` : ''
   if (item.kind === 'role') {
-    return `Role used in play "${item.playLabel}". Ansible would look for it at roles/${item.roleName}/tasks/main.yml.`
+    return `Role used in play "${item.playLabel}"${from}. Ansible would look for it at roles/${item.roleName}/tasks/main.yml.`
   }
   if (item.kind === 'include_tasks' || item.kind === 'import_tasks') {
     return item.taskName
-      ? `Referenced via ${item.kind} in task "${item.taskName}".`
-      : `Referenced via ${item.kind}.`
+      ? `Referenced via ${item.kind} in task "${item.taskName}"${from}.`
+      : `Referenced via ${item.kind}${from}.`
   }
   return 'Referenced by the playbook but not found in this project.'
 }
@@ -66,6 +67,11 @@ function buildMissingRefs(extraFiles, nodes) {
   const out = []
   nodes.forEach((n) => {
     if (n.type !== 'missingFileNode') return
+    // Jinja2-templated targets (e.g. `{{ ansible_os_family }}.yml`) depend on
+    // runtime facts and have no literal file to create — listing them as an
+    // actionable "missing file" just told users to make a file named
+    // "{{ ansible_os_family }}.yml", which is never correct.
+    if (n.data?.dynamic) return
     const label = n.data?.label
     if (!label || seen.has(label)) return
     seen.add(label)
@@ -80,6 +86,7 @@ function buildMissingRefs(extraFiles, nodes) {
         taskName: n.data?.taskName ?? null,
         roleName: n.data?.roleName ?? null,
         playLabel: n.data?.playLabel ?? null,
+        sourceFile: n.data?.sourceFile ?? null,
       })
     }
   })
