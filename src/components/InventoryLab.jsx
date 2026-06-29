@@ -13,6 +13,7 @@ import {
   Server, Users, Plus, Trash2, Filter, X,
   CheckCircle2, XCircle, ChevronRight, AlertTriangle,
   RefreshCw, ChevronDown, Upload, ClipboardPaste, FileInput, Copy, Check,
+  ArrowRightLeft,
 } from 'lucide-react'
 import { matchHostPattern } from '../lib/ansibleLimit'
 import { parseInventoryText, mergeInventories } from '../lib/parseInventory'
@@ -173,7 +174,7 @@ function GroupRow({ groupName, hosts, allHosts, onAddHost, onRemoveHost, onRemov
   )
 }
 
-function InventoryEditor({ inventory, onInventoryChange, onHostvarsChange }) {
+function InventoryEditor({ inventory, hostvars, onInventoryChange, onHostvarsChange, onSyncToPlaybook }) {
   const [newGroup, setNewGroup]       = useState('')
   const [isDragging, setIsDragging]   = useState(false)
   const [importError, setImportError] = useState(null)
@@ -320,6 +321,17 @@ function InventoryEditor({ inventory, onInventoryChange, onHostvarsChange }) {
             Inventory
           </span>
           <span className="text-slate-600 text-[10px] font-mono">{allHosts.length} host{allHosts.length !== 1 ? 's' : ''}</span>
+          {allHosts.length > 0 && (
+            <button
+              onClick={() => onSyncToPlaybook?.({ inventory, hostvars })}
+              title="Add this inventory to the Playbook project so it resolves real group_vars/host_vars"
+              className="flex items-center gap-1 px-2 py-0.5 rounded border border-slate-700
+                text-[10px] font-mono text-slate-500 hover:text-cyan-300 hover:border-cyan-700 transition-all min-h-[36px] sm:min-h-0"
+            >
+              <ArrowRightLeft size={10} />
+              Use in Playbook
+            </button>
+          )}
           <button
             data-tour="inventory-import"
             onClick={() => fileInputRef.current?.click()}
@@ -872,7 +884,7 @@ function loadHostvars() {
   return {}
 }
 
-export default function InventoryLab({ initialShareState = null, onShareStateChange }) {
+export default function InventoryLab({ initialShareState = null, onShareStateChange, onSyncToPlaybook }) {
   const [inventory, setInventoryRaw] = useState(() => initialShareState?.inventory ?? loadInventory())
   const [hostvars, setHostvarsRaw]   = useState(() => initialShareState?.hostvars ?? loadHostvars())
   const [selectedHost, setSelectedHost] = useState(null)
@@ -922,8 +934,10 @@ export default function InventoryLab({ initialShareState = null, onShareStateCha
       <div data-tour="inventory-editor" className="w-full h-[50vh] shrink-0 border-b border-slate-800 overflow-hidden flex flex-col relative md:h-auto md:w-[40%] md:min-w-[280px] md:border-b-0 md:border-r">
         <InventoryEditor
           inventory={inventory}
+          hostvars={hostvars}
           onInventoryChange={setInventory}
           onHostvarsChange={setHostvars}
+          onSyncToPlaybook={onSyncToPlaybook}
         />
       </div>
 

@@ -10,10 +10,10 @@
   },
   "dependencies": {
     "@monaco-editor/react": "^4.6.0",
+    "@zip.js/zip.js": "^2.8.26",
     "driver.js": "^1.4.0",
     "fflate": "^0.8.2",
     "js-yaml": "^4.1.0",
-    "jszip": "^3.10.1",
     "lucide-react": "^0.468.0",
     "lz-string": "^1.5.0",
     "nunjucks": "^3.2.4",

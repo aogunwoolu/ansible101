@@ -89,7 +89,7 @@ const STEPS = {
     {
       selector: '[data-tour="resolver-pickers"]',
       title: 'Pick What You\'re Resolving',
-      description: 'Three dropdowns: which <b>inventory</b>, which <b>playbook</b>, and which <b>host</b>. Variables can resolve differently for every host - change any of these and the table updates instantly.',
+      description: 'Two dropdowns: which <b>inventory</b> and which <b>host</b>. Variables can resolve differently for every host - change either and the table updates instantly. (To resolve a different playbook, switch the active playbook in the toolbar above.)',
       side: 'bottom',
       align: 'start',
     },

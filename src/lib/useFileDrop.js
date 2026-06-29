@@ -14,7 +14,7 @@
  * "myproject/group_vars/all.yml" becomes "group_vars/all.yml".
  */
 import { useState, useCallback } from 'react'
-import JSZip from 'jszip'
+import { ZipReader, BlobReader, TextWriter } from '@zip.js/zip.js'
 
 // Extensions we treat as binary and skip. Ansible repos commonly vendor
 // offline-install artifacts (rpm/deb/iso/sqlite/...) in roles/*/files/ —
@@ -85,26 +85,28 @@ function readEntry(entry, prefix = '') {
   })
 }
 
-async function readZip(file) {
+export async function readZip(file) {
   const out = []
+  // zip.js (not jszip) — jszip's zip64 offset parsing breaks once a zip's
+  // payload crosses 4GB (common for Ansible repos vendoring offline-install
+  // artifacts), silently landing reads in the wrong place and throwing
+  // "Corrupted zip" even on perfectly valid archives.
+  const reader = new ZipReader(new BlobReader(file))
   try {
-    const zip = await JSZip.loadAsync(file)
-    const entries = Object.values(zip.files).filter(
-      (f) => !f.dir && !isBinary(f.name) && !isJunk(f.name),
-    )
+    const entries = await reader.getEntries()
     for (const entry of entries) {
-      // Decompress to bytes first so we can bail on oversized entries before
-      // paying for a UTF-8 string decode (the part that hangs the tab).
-      const bytes = await entry.async('uint8array')
-      if (isTooLarge(bytes.byteLength)) continue
-      const content = new TextDecoder().decode(bytes)
-      if (entry.name) out.push({ name: entry.name, content }) // keep full path
+      if (entry.directory || isBinary(entry.filename) || isJunk(entry.filename)) continue
+      if (isTooLarge(entry.uncompressedSize)) continue
+      const content = await entry.getData(new TextWriter())
+      if (entry.filename) out.push({ name: entry.filename, content }) // keep full path
     }
   } catch (err) {
     // Surface the failure so callers can tell "empty zip" apart from
     // "extraction blew up" — large/corrupt archives were previously silent.
     console.error('readZip failed:', err)
     throw err
+  } finally {
+    await reader.close()
   }
   return out
 }

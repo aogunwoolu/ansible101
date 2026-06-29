@@ -320,6 +320,20 @@ export function parseInventoryText(text) {
 }
 
 /**
+ * Inverse of parseInventoryText's JSON branch — serializes {groups, hostvars}
+ * back into `ansible-inventory --list`-shaped JSON text, so Limits Lab's
+ * in-memory inventory can be dropped into a project as a real file.
+ */
+export function buildInventoryJson(groups = {}, hostvars = {}) {
+  const out = {}
+  for (const [group, hosts] of Object.entries(groups)) {
+    out[group] = { hosts: [...hosts].sort() }
+  }
+  if (Object.keys(hostvars).length) out._meta = { hostvars }
+  return JSON.stringify(out, null, 2)
+}
+
+/**
  * Merge two inventories. Mode 'replace' overwrites; 'append' unions hosts per group.
  */
 export function mergeInventories(existing, incoming, mode) {

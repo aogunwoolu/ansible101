@@ -108,6 +108,7 @@ function compactState(yaml, facts, extraFiles = [], meta = {}) {
   if (typeof meta.mode === 'string' && meta.mode) out.m = meta.mode
   const limits = compactLimits(meta.limits)
   if (limits) out.l = limits
+  if (typeof meta.mainPath === 'string' && meta.mainPath) out.mp = meta.mainPath
 
   return out
 }
@@ -115,7 +116,7 @@ function compactState(yaml, facts, extraFiles = [], meta = {}) {
 function expandState(parsed) {
   if (!isObject(parsed)) return null
 
-  const isCompact = 'y' in parsed || 'f' in parsed || 'x' in parsed || 'm' in parsed || 'l' in parsed
+  const isCompact = 'y' in parsed || 'f' in parsed || 'x' in parsed || 'm' in parsed || 'l' in parsed || 'mp' in parsed
   if (isCompact) {
     const out = {
       yaml: typeof parsed.y === 'string' ? parsed.y : '',
@@ -124,6 +125,7 @@ function expandState(parsed) {
     }
     if (typeof parsed.m === 'string') out.mode = parsed.m
     if (parsed.l) out.limits = expandLimits(parsed.l)
+    if (typeof parsed.mp === 'string') out.mainPath = parsed.mp
     return out
   }
 

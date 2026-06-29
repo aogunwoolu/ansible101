@@ -1,11 +1,23 @@
 /**
  * FileExplorer.jsx — resizable, collapsible file sidebar with a nested folder tree.
+ *
+ * Folders are derived from file paths (and from `folders`, explicit empty
+ * placeholders — see buildTree). Renaming a file or folder edits its full
+ * relative path, so it can move between folders; renaming a folder rewrites
+ * the shared path prefix of everything under it. Right-click (or the "+"
+ * buttons) on a file, folder, the main row, or empty space opens the
+ * relevant actions via the shared ContextMenu.
  */
 /* eslint-disable react/prop-types */
 /* eslint-disable jsx-a11y/no-static-element-interactions */
 /* eslint-disable jsx-a11y/click-events-have-key-events */
 import React, { useRef, useState, useMemo, useCallback, useEffect } from 'react'
-import { ChevronDown, ChevronRight, Plus, Pencil, X, AlertTriangle } from 'lucide-react'
+import { createPortal } from 'react-dom'
+import {
+  ChevronDown, ChevronRight, Plus, Pencil, X, AlertTriangle,
+  Trash2, FilePlus, FolderPlus,
+} from 'lucide-react'
+import { isValidRelativePath } from '../lib/filePaths'
 
 /* ─── helpers ──────────────────────────────────────────────── */
 
@@ -42,14 +54,12 @@ function buildMissingRefs(extraFiles, nodes) {
   return out
 }
 
-function dirOf(name) { const i = name.lastIndexOf('/'); return i === -1 ? '' : name.slice(0, i) }
-function joinPath(dir, base) { return dir ? `${dir}/${base}` : base }
-
 /**
- * Build a recursive tree from full relative paths.
+ * Build a recursive tree from full relative paths, plus any explicit empty
+ * folder placeholders (`extraFolders` — folders with no files yet).
  * Node: { dirs: Map<name, Node>, files: [{file,status,base}], missing: [{item,base}] }
  */
-function buildTree(extraFiles, statuses, missingRefs) {
+function buildTree(extraFiles, statuses, missingRefs, extraFolders = []) {
   const root = { dirs: new Map(), files: [], missing: [] }
   const ensure = (parts) => {
     let node = root
@@ -69,6 +79,7 @@ function buildTree(extraFiles, statuses, missingRefs) {
     const base = parts.pop()
     ensure(parts).missing.push({ item, base })
   })
+  extraFolders.forEach((p) => { if (p) ensure(p.split('/')) })
   return root
 }
 
@@ -80,41 +91,137 @@ function subtreeHasMissing(node) {
 
 const padFor = (depth) => ({ paddingLeft: depth * 11 + 8 })
 
+/* ─── context menu ───────────────────────────────────────── */
+
+/**
+ * Generic right-click menu, portaled to <body> and fixed-positioned at the
+ * triggering event's coordinates. `items`: [{label, Icon?, onSelect, danger?,
+ * disabled?} | {divider:true}].
+ */
+function ContextMenu({ x, y, items, onClose }) {
+  const ref = useRef(null)
+
+  useEffect(() => {
+    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) onClose() }
+    const onKey = (e) => { if (e.key === 'Escape') onClose() }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    document.addEventListener('scroll', onClose, true)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+      document.removeEventListener('scroll', onClose, true)
+    }
+  }, [onClose])
+
+  // Keep the menu on-screen near the click point.
+  const left = Math.min(x, globalThis.innerWidth - 180)
+  const top = Math.min(y, globalThis.innerHeight - items.length * 28 - 16)
+
+  return createPortal(
+    <div
+      ref={ref}
+      style={{ position: 'fixed', left: Math.max(4, left), top: Math.max(4, top), zIndex: 100 }}
+      className="min-w-[160px] rounded border border-slate-700 bg-slate-900 py-1 shadow-xl shadow-black/50"
+    >
+      {items.map((item, i) => (item.divider ? (
+        <div key={`d${i}`} className="my-1 h-px bg-slate-800" />
+      ) : (
+        <button
+          key={item.label}
+          disabled={item.disabled}
+          onClick={() => { item.onSelect(); onClose() }}
+          className={`w-full flex items-center gap-2 px-3 py-1.5 text-left text-[11px] font-mono transition-colors
+            ${item.disabled ? 'opacity-40 cursor-not-allowed' : item.danger ? 'text-red-400 hover:bg-red-950/40' : 'text-slate-300 hover:bg-slate-800'}`}
+        >
+          {item.Icon && <item.Icon size={11} className="shrink-0" />}
+          {item.label}
+        </button>
+      )))}
+    </div>,
+    document.body,
+  )
+}
+
 /* ─── row components ─────────────────────────────────────── */
 
-function MainRow({ active, onSwitch }) {
+function MainRow({ name, active, onSwitch, onContextMenu, renaming, onRename, onCancelRename, validate }) {
+  const inputRef = useRef(null)
+  const [renameError, setRenameError] = useState(null)
+
+  useEffect(() => {
+    if (!renaming) return undefined
+    setRenameError(null)
+    const t = setTimeout(() => { inputRef.current?.focus(); inputRef.current?.select() }, 0)
+    return () => clearTimeout(t)
+  }, [renaming])
+
+  const commitRename = useCallback(() => {
+    const val = inputRef.current?.value?.trim()
+    if (!val || val === name) { onCancelRename(); return }
+    const err = validate(val)
+    if (err) { setRenameError(err); return }
+    onRename(val)
+  }, [name, onRename, onCancelRename, validate])
+
   return (
-    <button
-      onClick={onSwitch}
-      className={`w-full flex items-center gap-2 pl-2 pr-2 h-[26px] text-left transition-colors border-l-[2px]
+    <div
+      onClick={renaming ? undefined : onSwitch}
+      onContextMenu={onContextMenu}
+      className={`w-full flex items-center gap-2 pl-2 pr-2 h-[26px] text-left transition-colors border-l-[2px] cursor-pointer
         ${active
           ? 'border-l-cyan-500 bg-slate-800/70'
           : 'border-l-transparent hover:bg-slate-800/30'
         }`}
     >
-      <span className={`text-[10px] font-mono flex-1 truncate font-medium ${active ? 'text-cyan-300' : 'text-slate-400'}`}>
-        playbook.yml
-      </span>
-      <span className="text-[8px] font-mono text-slate-700 shrink-0">main</span>
-    </button>
+      {renaming ? (
+        <input
+          ref={inputRef}
+          defaultValue={name}
+          onClick={(e) => e.stopPropagation()}
+          onBlur={commitRename}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commitRename()
+            if (e.key === 'Escape') onCancelRename()
+          }}
+          className={`flex-1 bg-slate-700 text-[10px] font-mono text-white px-1.5 py-px rounded outline-none ring-1 min-w-0
+            ${renameError ? 'ring-red-500' : 'ring-cyan-500/40'}`}
+        />
+      ) : (
+        <span className={`text-[10px] font-mono flex-1 truncate font-medium ${active ? 'text-cyan-300' : 'text-slate-400'}`}>
+          {name}
+        </span>
+      )}
+      {renaming && renameError ? (
+        <span className="text-red-400 text-[8px] font-mono shrink-0" title={renameError}>!</span>
+      ) : (
+        <span className="text-[8px] font-mono text-slate-700 shrink-0">main</span>
+      )}
+    </div>
   )
 }
 
-function FileRow({ file, status, rel, depth = 0, active, onSwitch, onRemove, onRename, hasError = false, onDragStart, onDragOver, onDrop, isDragOver }) {
+function FileRow({
+  file, status, rel, depth = 0, active, renaming, onSwitch, onRemove, onRename, onStartRename, onCancelRename,
+  onContextMenu, validate, hasError = false, onDragStart, onDragOver, onDrop, isDragOver,
+}) {
   const inputRef = useRef(null)
-  const [renaming, setRenaming] = useState(false)
+  const [renameError, setRenameError] = useState(null)
 
-  const startRename = useCallback((e) => {
-    e.stopPropagation()
-    setRenaming(true)
-    setTimeout(() => { inputRef.current?.focus(); inputRef.current?.select() }, 0)
-  }, [])
+  useEffect(() => {
+    if (!renaming) return undefined
+    setRenameError(null)
+    const t = setTimeout(() => { inputRef.current?.focus(); inputRef.current?.select() }, 0)
+    return () => clearTimeout(t)
+  }, [renaming])
 
   const commitRename = useCallback(() => {
     const val = inputRef.current?.value?.trim()
-    if (val && val !== rel) onRename(val)
-    setRenaming(false)
-  }, [rel, onRename])
+    if (!val || val === file.name) { onCancelRename(); return }
+    const err = validate(val)
+    if (err) { setRenameError(err); return }
+    onRename(val)
+  }, [file.name, onRename, onCancelRename, validate])
 
   const textColor = active ? 'text-white'
     : hasError ? 'text-red-400'
@@ -132,6 +239,7 @@ function FileRow({ file, status, rel, depth = 0, active, onSwitch, onRemove, onR
       onDragOver={(e) => { e.preventDefault(); onDragOver?.() }}
       onDrop={onDrop}
       onDragEnd={() => onDrop?.(null, true)}
+      onContextMenu={onContextMenu}
       style={padFor(depth)}
       className={`group flex items-center gap-1 pr-1 h-[24px] border-l-[2px] cursor-pointer transition-colors
         ${isDragOver ? 'border-l-cyan-400 bg-cyan-950/30' : borderColor}
@@ -141,12 +249,13 @@ function FileRow({ file, status, rel, depth = 0, active, onSwitch, onRemove, onR
       {renaming ? (
         <input
           ref={inputRef}
-          defaultValue={rel}
-          className="flex-1 bg-slate-700 text-[10px] font-mono text-white px-1.5 py-px rounded outline-none ring-1 ring-cyan-500/40 min-w-0"
+          defaultValue={file.name}
+          className={`flex-1 bg-slate-700 text-[10px] font-mono text-white px-1.5 py-px rounded outline-none ring-1 min-w-0
+            ${renameError ? 'ring-red-500' : 'ring-cyan-500/40'}`}
           onBlur={commitRename}
           onKeyDown={(e) => {
             if (e.key === 'Enter') commitRename()
-            if (e.key === 'Escape') setRenaming(false)
+            if (e.key === 'Escape') onCancelRename()
           }}
           onClick={(e) => e.stopPropagation()}
         />
@@ -155,12 +264,15 @@ function FileRow({ file, status, rel, depth = 0, active, onSwitch, onRemove, onR
           {rel}
         </span>
       )}
+      {renaming && renameError && (
+        <span className="text-red-400 text-[8px] font-mono shrink-0 px-1" title={renameError}>!</span>
+      )}
       {!renaming && hasError && (
         <span className="w-1 h-1 rounded-full bg-red-500 shrink-0 mr-px" title="YAML error" />
       )}
       {!renaming && (
         <span className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-          <button onClick={startRename} className="p-px text-slate-600 hover:text-slate-300" title="Rename">
+          <button onClick={(e) => { e.stopPropagation(); onStartRename() }} className="p-px text-slate-600 hover:text-slate-300" title="Rename">
             <Pencil size={8} />
           </button>
           <button onClick={(e) => { e.stopPropagation(); onRemove() }} className="p-px text-slate-600 hover:text-red-400" title="Remove">
@@ -189,12 +301,31 @@ function MissingRow({ item, rel, depth = 0, onAdd }) {
   )
 }
 
-function FolderRow({ name, open, onToggle, hasMissing, depth = 0 }) {
+function FolderRow({ path, name, open, onToggle, hasMissing, depth = 0, renaming, onRename, onCancelRename, onContextMenu, validate }) {
+  const inputRef = useRef(null)
+  const [renameError, setRenameError] = useState(null)
+
+  useEffect(() => {
+    if (!renaming) return undefined
+    setRenameError(null)
+    const t = setTimeout(() => { inputRef.current?.focus(); inputRef.current?.select() }, 0)
+    return () => clearTimeout(t)
+  }, [renaming])
+
+  const commitRename = useCallback(() => {
+    const val = inputRef.current?.value?.trim()
+    if (!val || val === path) { onCancelRename(); return }
+    const err = validate(val)
+    if (err) { setRenameError(err); return }
+    onRename(val)
+  }, [path, onRename, onCancelRename, validate])
+
   return (
-    <button
-      onClick={onToggle}
+    <div
+      onClick={renaming ? undefined : onToggle}
+      onContextMenu={onContextMenu}
       style={padFor(depth)}
-      className="w-full flex items-center gap-1 pr-1 h-[22px] group hover:bg-slate-800/30 transition-colors"
+      className="w-full flex items-center gap-1 pr-1 h-[22px] group hover:bg-slate-800/30 transition-colors cursor-pointer"
     >
       <span
         className="text-[8px] font-mono text-slate-600 transition-transform duration-100 shrink-0 leading-none select-none"
@@ -202,11 +333,27 @@ function FolderRow({ name, open, onToggle, hasMissing, depth = 0 }) {
       >
         ▾
       </span>
-      <span className="text-[9px] font-mono text-slate-500 group-hover:text-slate-400 truncate transition-colors flex-1 text-left">
-        {name}/
-      </span>
-      {hasMissing && <span className="shrink-0 w-1 h-1 rounded-full bg-orange-600/70" />}
-    </button>
+      {renaming ? (
+        <input
+          ref={inputRef}
+          defaultValue={path}
+          onClick={(e) => e.stopPropagation()}
+          onBlur={commitRename}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commitRename()
+            if (e.key === 'Escape') onCancelRename()
+          }}
+          className={`flex-1 bg-slate-700 text-[9px] font-mono text-white px-1 py-px rounded outline-none ring-1 min-w-0
+            ${renameError ? 'ring-red-500' : 'ring-cyan-500/40'}`}
+        />
+      ) : (
+        <span className="text-[9px] font-mono text-slate-500 group-hover:text-slate-400 truncate transition-colors flex-1 text-left">
+          {name}/
+        </span>
+      )}
+      {!renaming && hasMissing && <span className="shrink-0 w-1 h-1 rounded-full bg-orange-600/70" />}
+      {renaming && renameError && <span className="text-red-400 text-[8px] font-mono shrink-0 px-1" title={renameError}>!</span>}
+    </div>
   )
 }
 
@@ -225,7 +372,25 @@ function TreeLevel({ node, path, depth, openDirs, toggleDir, ctx }) {
         const open = openDirs[childPath] !== false
         return (
           <React.Fragment key={childPath}>
-            <FolderRow name={name} open={open} onToggle={() => toggleDir(childPath)} hasMissing={subtreeHasMissing(child)} depth={depth} />
+            <FolderRow
+              path={childPath}
+              name={name}
+              open={open}
+              onToggle={() => toggleDir(childPath)}
+              hasMissing={subtreeHasMissing(child)}
+              depth={depth}
+              renaming={ctx.renamingFolderPath === childPath}
+              onRename={(val) => { ctx.onRenameFolder(childPath, val); ctx.setRenamingFolderPath(null) }}
+              onCancelRename={() => ctx.setRenamingFolderPath(null)}
+              validate={(val) => ctx.validateFolderRename(childPath, val)}
+              onContextMenu={(e) => ctx.openMenu(e, [
+                { label: 'New file here', Icon: FilePlus, onSelect: () => ctx.onAdd(childPath) },
+                { label: 'New folder here', Icon: FolderPlus, onSelect: () => ctx.onAddFolder(childPath) },
+                { label: 'Rename', Icon: Pencil, onSelect: () => ctx.setRenamingFolderPath(childPath) },
+                { divider: true },
+                { label: 'Delete', Icon: Trash2, danger: true, onSelect: () => ctx.onRemoveFolder(childPath) },
+              ])}
+            />
             {open && <TreeLevel node={child} path={childPath} depth={depth + 1} openDirs={openDirs} toggleDir={toggleDir} ctx={ctx} />}
           </React.Fragment>
         )
@@ -238,14 +403,22 @@ function TreeLevel({ node, path, depth, openDirs, toggleDir, ctx }) {
           rel={base}
           depth={depth}
           active={ctx.activeId === file.id}
+          renaming={ctx.renamingFileId === file.id}
           onSwitch={() => ctx.onSwitch(file.id)}
           onRemove={() => ctx.onRemove(file.id)}
-          onRename={(newBase) => ctx.onRename(file.id, joinPath(dirOf(file.name), newBase))}
+          onRename={(val) => { ctx.onRename(file.id, val); ctx.setRenamingFileId(null) }}
+          onStartRename={() => ctx.setRenamingFileId(file.id)}
+          onCancelRename={() => ctx.setRenamingFileId(null)}
+          validate={(val) => ctx.validateRename(file.id, val)}
           hasError={!!ctx.fileErrors[file.id]}
           onDragStart={() => ctx.setDragId(file.id)}
           onDragOver={() => ctx.setOverId(file.id)}
           onDrop={() => ctx.commitDrop(file.id)}
           isDragOver={ctx.overId === file.id && ctx.dragId !== file.id}
+          onContextMenu={(e) => ctx.openMenu(e, [
+            { label: 'Rename', Icon: Pencil, onSelect: () => ctx.setRenamingFileId(file.id) },
+            { label: 'Delete', Icon: Trash2, danger: true, onSelect: () => ctx.onRemove(file.id) },
+          ])}
         />
       ))}
       {missing.map(({ item, base }) => (
@@ -262,16 +435,22 @@ function TreeLevel({ node, path, depth, openDirs, toggleDir, ctx }) {
  * - Drag the right edge to resize.
  * - Click the chevron to collapse to a thin strip.
  * - Files are grouped into a nested, collapsible folder tree by their path.
+ * - Right-click a file/folder/the main row/empty space for actions.
  */
 export default function FileExplorer({
   files,
+  folders = [],
   activeId,
   onSwitch,
   onAdd,
   onAddNamed,
   onRemove,
   onRename,
+  onRenameMain,
   onReorder,
+  onAddFolder,
+  onRenameFolder,
+  onRemoveFolder,
   nodes = [],
   fileErrors = {},
   isMobile = false,
@@ -281,6 +460,9 @@ export default function FileExplorer({
   const [openDirs, setOpenDirs] = useState({})
   const [dragId, setDragId] = useState(null)   // id being dragged
   const [overId, setOverId] = useState(null)   // id being hovered over
+  const [renamingFileId, setRenamingFileId] = useState(null)
+  const [renamingFolderPath, setRenamingFolderPath] = useState(null)
+  const [menu, setMenu] = useState(null) // { x, y, items }
   const isResizing = useRef(false)
   const dragStartX = useRef(0)
   const dragStartW = useRef(0)
@@ -290,7 +472,7 @@ export default function FileExplorer({
 
   const statuses = useMemo(() => buildStatusMap(extraFiles, nodes), [extraFiles, nodes])
   const missingRefs = useMemo(() => buildMissingRefs(extraFiles, nodes), [extraFiles, nodes])
-  const tree = useMemo(() => buildTree(extraFiles, statuses, missingRefs), [extraFiles, statuses, missingRefs])
+  const tree = useMemo(() => buildTree(extraFiles, statuses, missingRefs, folders), [extraFiles, statuses, missingRefs, folders])
 
   const toggleDir = useCallback((path) => {
     setOpenDirs((prev) => ({ ...prev, [path]: prev[path] === false }))
@@ -322,10 +504,40 @@ export default function FileExplorer({
     setOverId(null)
   }, [dragId, onReorder])
 
+  const closeMenu = useCallback(() => setMenu(null), [])
+  const openMenu = useCallback((e, items) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setMenu({ x: e.clientX, y: e.clientY, items })
+  }, [])
+
+  // A file may take the main row's slot — exclude its own id from collisions.
+  const validateRename = useCallback((excludeId, candidate) => {
+    if (!isValidRelativePath(candidate)) return 'Invalid path'
+    if (files.some((f) => f.id !== excludeId && f.name === candidate)) return 'A file with that name already exists'
+    return null
+  }, [files])
+
+  // Folder rename only conflicts with files OUTSIDE the folder being renamed
+  // (its own contents move with it).
+  const validateFolderRename = useCallback((oldPrefix, candidate) => {
+    if (!isValidRelativePath(candidate)) return 'Invalid path'
+    const collides = files.some((f) => f.name === candidate && f.name !== oldPrefix && !f.name.startsWith(`${oldPrefix}/`))
+    if (collides) return 'A file with that name already exists'
+    return null
+  }, [files])
+
   const treeCtx = useMemo(() => ({
     activeId, onSwitch, onRemove, onRename, onAddNamed, fileErrors,
     setDragId, setOverId, commitDrop, dragId, overId,
-  }), [activeId, onSwitch, onRemove, onRename, onAddNamed, fileErrors, commitDrop, dragId, overId])
+    renamingFileId, setRenamingFileId, validateRename,
+    renamingFolderPath, setRenamingFolderPath, validateFolderRename,
+    onAdd, onAddFolder, onRemoveFolder, onRenameFolder, openMenu,
+  }), [
+    activeId, onSwitch, onRemove, onRename, onAddNamed, fileErrors, commitDrop, dragId, overId,
+    renamingFileId, validateRename, renamingFolderPath, validateFolderRename,
+    onAdd, onAddFolder, onRemoveFolder, onRenameFolder, openMenu,
+  ])
 
   const onResizeStart = useCallback((e) => {
     e.preventDefault()
@@ -419,12 +631,19 @@ export default function FileExplorer({
     )
   }
 
+  const backgroundMenuItems = [
+    { label: 'New file', Icon: FilePlus, onSelect: () => onAdd() },
+    { label: 'New folder', Icon: FolderPlus, onSelect: () => onAddFolder() },
+  ]
+
   /* ── Expanded ── */
   return (
     <div
       className="relative flex flex-col border-r border-slate-800 bg-slate-950 select-none shrink-0 overflow-hidden"
       style={{ width: `${width}px` }}
     >
+      {menu && <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={closeMenu} />}
+
       {/* Header */}
       <div className="flex items-center h-[26px] px-2 shrink-0 gap-0.5">
         <span className="text-[8px] font-mono uppercase tracking-[0.14em] text-slate-600 flex-1">files</span>
@@ -433,7 +652,10 @@ export default function FileExplorer({
             <AlertTriangle size={7} />{missingRefs.length}
           </span>
         )}
-        <button onClick={onAdd} title="New file" className="p-0.5 text-slate-600 hover:text-cyan-400 transition-colors shrink-0">
+        <button onClick={() => onAddFolder()} title="New folder" className="p-0.5 text-slate-600 hover:text-cyan-400 transition-colors shrink-0">
+          <FolderPlus size={10} />
+        </button>
+        <button onClick={() => onAdd()} title="New file" className="p-0.5 text-slate-600 hover:text-cyan-400 transition-colors shrink-0">
           <Plus size={10} />
         </button>
         <button onClick={() => setCollapsed(true)} title="Collapse" className="p-0.5 text-slate-700 hover:text-slate-400 transition-colors shrink-0">
@@ -442,17 +664,36 @@ export default function FileExplorer({
       </div>
 
       {/* File list */}
-      <div className="flex-1 overflow-y-auto overflow-x-hidden">
-        <MainRow active={activeId === mainFile.id} onSwitch={() => onSwitch(mainFile.id)} />
+      <div className="flex-1 overflow-y-auto overflow-x-hidden" onContextMenu={(e) => openMenu(e, backgroundMenuItems)}>
+        <MainRow
+          name={mainFile.name}
+          active={activeId === mainFile.id}
+          onSwitch={() => onSwitch(mainFile.id)}
+          renaming={renamingFileId === mainFile.id}
+          onRename={(val) => { onRenameMain(val); setRenamingFileId(null) }}
+          onCancelRename={() => setRenamingFileId(null)}
+          validate={(val) => validateRename(mainFile.id, val)}
+          onContextMenu={(e) => openMenu(e, [
+            { label: 'Rename', Icon: Pencil, onSelect: () => setRenamingFileId(mainFile.id) },
+          ])}
+        />
 
         <TreeLevel node={tree} path="" depth={0} openDirs={openDirs} toggleDir={toggleDir} ctx={treeCtx} />
 
-        <button
-          onClick={onAdd}
-          className="w-full flex items-center gap-1 px-2 h-[20px] text-[8px] font-mono text-slate-700 hover:text-slate-500 transition-colors mt-1"
-        >
-          <Plus size={7} /><span>new file</span>
-        </button>
+        <div className="flex items-center gap-2 mt-1">
+          <button
+            onClick={() => onAdd()}
+            className="flex-1 flex items-center gap-1 px-2 h-[20px] text-[8px] font-mono text-slate-700 hover:text-slate-500 transition-colors"
+          >
+            <Plus size={7} /><span>new file</span>
+          </button>
+          <button
+            onClick={() => onAddFolder()}
+            className="flex items-center gap-1 px-2 h-[20px] text-[8px] font-mono text-slate-700 hover:text-slate-500 transition-colors"
+          >
+            <FolderPlus size={7} /><span>new folder</span>
+          </button>
+        </div>
       </div>
 
       {/* Resize handle — drag right edge to resize */}

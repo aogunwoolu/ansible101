@@ -32,9 +32,12 @@ import AboutPage from './components/AboutPage'
 import InventoryLab from './components/InventoryLab'
 import ResolveView from './components/ResolveView'
 import ResizeHandle from './components/ResizeHandle'
+import Select from './components/Select'
+import ImportControls from './components/ImportControls'
 import { useFileDrop, readDataTransferFiles } from './lib/useFileDrop'
 import { isProject, buildProjectModel } from './lib/projectModel'
-import { parseInventoryText } from './lib/parseInventory'
+import { parseInventoryText, buildInventoryJson } from './lib/parseInventory'
+import { isValidRelativePath, pathCollides } from './lib/filePaths'
 import { startTour } from './lib/tour'
 
 import {
@@ -187,7 +190,14 @@ export default function App() {
 
   const [facts, setFacts]                           = useState(() => urlState?.facts ?? DEFAULT_FACTS)
   const [extraFiles, setExtraFiles]                 = useState(() => normaliseExtraFiles(urlState?.extraFiles))
+  // Folders with no files yet (created via "New folder") — purely an editor
+  // organizational aid, not meaningful Ansible state, so session-only.
+  const [extraFolders, setExtraFolders]             = useState([])
   const [activeFileId, setActiveFileId]             = useState('main')
+  // Real filename of whatever's currently in texts.playbook — lets FileExplorer
+  // and the playbook switcher show/select the actual imported name instead of
+  // a hardcoded placeholder.
+  const [mainPath, setMainPath]                     = useState(() => urlState?.mainPath ?? 'playbook.yml')
   const [parseError, setParseError]                 = useState(null)
   const [selectedNode, setSelectedNode]             = useState(null)
   const [highlightLines, setHighlightLines]         = useState(null)
@@ -243,6 +253,7 @@ export default function App() {
     if (urlState.facts) setFacts(urlState.facts)
     setExtraFiles(normaliseExtraFiles(urlState.extraFiles))
     setLimitsShareState(urlState?.limits ?? null)
+    setMainPath(urlState.mainPath ?? 'playbook.yml')
     setActiveFileId('main')
 
     // A shared link carried its state in the hash. Only playbook mode mirrors
@@ -316,8 +327,8 @@ export default function App() {
   // into the URL on demand — see handleShare.)
   useEffect(() => {
     if (mode !== 'playbook') return
-    persistState(debouncedPlaybook, debouncedFactsForUrl, debouncedExtraFiles)
-  }, [mode, debouncedPlaybook, debouncedFactsForUrl, debouncedExtraFiles])
+    persistState(debouncedPlaybook, debouncedFactsForUrl, debouncedExtraFiles, { mainPath })
+  }, [mode, debouncedPlaybook, debouncedFactsForUrl, debouncedExtraFiles, mainPath])
 
   useEffect(() => {
     const onPopState = () => {
@@ -341,6 +352,7 @@ export default function App() {
         setExtraFiles([])
       }
       setLimitsShareState(nextState?.limits ?? null)
+      setMainPath(applies ? (nextState.mainPath ?? 'playbook.yml') : 'playbook.yml')
       setActiveFileId('main')
       setSelectedNode(null)
       setHighlightLines(null)
@@ -372,6 +384,25 @@ export default function App() {
     setUserVars(ctx || {})
     updateBrowserPath('jinja2', 'pushState')
     setMode('jinja2')
+    setSelectedNode(null)
+    setHighlightLines(null)
+  }, [])
+
+  // Limits Lab → Playbook: drop the lab's in-memory inventory into the project
+  // as a real file (under inventory/ so it's recognized regardless of name)
+  // so Resolve can use it for real group_vars/host_vars precedence. Re-syncing
+  // overwrites the same file rather than piling up duplicates.
+  const LIMITS_INVENTORY_PATH = 'inventory/limits-lab.json'
+  const handleSyncInventoryToPlaybook = useCallback(({ inventory, hostvars } = {}) => {
+    const content = buildInventoryJson(inventory ?? {}, hostvars ?? {})
+    setExtraFiles((prev) => [
+      ...prev.filter((f) => f.name !== LIMITS_INVENTORY_PATH),
+      { id: 'limits-inventory', name: LIMITS_INVENTORY_PATH, content },
+    ])
+    userPickedView.current = true
+    setViewMode('resolve')
+    updateBrowserPath('playbook', 'pushState')
+    setMode('playbook')
     setSelectedNode(null)
     setHighlightLines(null)
   }, [])
@@ -469,6 +500,7 @@ export default function App() {
 
     setTexts((prev) => ({ ...prev, playbook: mainContent }))
     setExtraFiles(rest.map((f, i) => ({ id: `drop-${Date.now()}-${i}`, name: f.name, content: f.content })))
+    setMainPath(primary ?? 'playbook.yml')
     setActiveFileId('main')
     userPickedView.current = false
     setViewMode(project ? 'resolve' : 'flow')
@@ -518,7 +550,7 @@ export default function App() {
       })
     } else {
       const factsForUrl = stableStringify(facts) === stableStringify(DEFAULT_FACTS) ? null : facts
-      result = buildShareUrl(yamlText, factsForUrl, extraFiles)
+      result = buildShareUrl(yamlText, factsForUrl, extraFiles, mode === 'playbook' ? { mainPath } : {})
     }
     // Some projects are too big to encode into a practical link. The work is
     // still auto-saved to this browser; it just can't travel in a URL.
@@ -531,7 +563,7 @@ export default function App() {
       setCopySuccess(true)
       setTimeout(() => setCopySuccess(false), 2500)
     })
-  }, [mode, yamlText, facts, extraFiles, limitsShareState])
+  }, [mode, yamlText, facts, extraFiles, limitsShareState, mainPath])
 
   const canShare = useMemo(() => {
     if (mode === 'limits') {
@@ -619,12 +651,13 @@ export default function App() {
   }, [handleSelectView])
 
   // Extra file management handlers
-  const handleAddFile = useCallback(() => {
+  const handleAddFile = useCallback((folderPath = '') => {
     const id = `file-${Date.now()}`
     const count = extraFiles.length + 1
+    const name = folderPath ? `${folderPath}/new-${count}.yml` : `tasks/new-${count}.yml`
     const newFile = {
       id,
-      name: `tasks/new-${count}.yml`,
+      name,
       content: `# Tasks file — rename tab to match your include_tasks reference\n- name: Example task\n  debug:\n    msg: "Replace with your tasks"\n`,
     }
     setExtraFiles((prev) => [...prev, newFile])
@@ -636,9 +669,54 @@ export default function App() {
     setActiveFileId((prev) => (prev === id ? 'main' : prev))
   }, [])
 
+  // Renames the file's full relative path — typing a different folder
+  // segment moves it. Rejects unsafe paths and name collisions rather than
+  // silently overwriting another file.
   const handleRenameFile = useCallback((id, name) => {
+    if (!isValidRelativePath(name) || pathCollides(name, extraFiles, mainPath, id)) return
     setExtraFiles((prev) => prev.map((f) => (f.id === id ? { ...f, name } : f)))
-  }, [])
+  }, [extraFiles, mainPath])
+
+  // Renaming the active/main playbook is just relabeling mainPath — the
+  // content stays put (mirrors the unified-playbook-switcher's swap model).
+  const handleRenameMain = useCallback((name) => {
+    if (!isValidRelativePath(name) || pathCollides(name, extraFiles, null, null)) return
+    setMainPath(name)
+  }, [extraFiles])
+
+  // New folders are session-only placeholders (extraFolders) until a file
+  // lands under them — buildTree renders both the same way, so no merge step
+  // is needed once that happens.
+  const handleAddFolder = useCallback((parentPath = '') => {
+    setExtraFolders((prev) => {
+      const count = prev.length + extraFiles.length + 1
+      const name = parentPath ? `${parentPath}/new-folder-${count}` : `new-folder-${count}`
+      return prev.includes(name) ? prev : [...prev, name]
+    })
+  }, [extraFiles.length])
+
+  // Folders are just shared path prefixes — renaming one rewrites that
+  // prefix across every file (and empty sub-folder) under it in one batch.
+  const handleRenameFolder = useCallback((oldPrefix, newPrefix) => {
+    if (!isValidRelativePath(newPrefix)) return
+    if (pathCollides(newPrefix, extraFiles, mainPath, null)) return
+    const rewrite = (p) => (p === oldPrefix ? newPrefix : newPrefix + p.slice(oldPrefix.length))
+    setExtraFiles((prev) => prev.map((f) => (
+      f.name === oldPrefix || f.name.startsWith(`${oldPrefix}/`) ? { ...f, name: rewrite(f.name) } : f
+    )))
+    setExtraFolders((prev) => prev.map((p) => (
+      p === oldPrefix || p.startsWith(`${oldPrefix}/`) ? rewrite(p) : p
+    )))
+  }, [extraFiles, mainPath])
+
+  const handleRemoveFolder = useCallback((dirPath) => {
+    const removedIds = new Set(
+      extraFiles.filter((f) => f.name === dirPath || f.name.startsWith(`${dirPath}/`)).map((f) => f.id),
+    )
+    setExtraFiles((prev) => prev.filter((f) => !removedIds.has(f.id)))
+    setExtraFolders((prev) => prev.filter((p) => p !== dirPath && !p.startsWith(`${dirPath}/`)))
+    setActiveFileId((prev) => (removedIds.has(prev) ? 'main' : prev))
+  }, [extraFiles])
 
   // Reorder a file by dragging it before another
   const handleReorderFile = useCallback((dragId, targetId) => {
@@ -686,6 +764,36 @@ export default function App() {
     })
     if (newFiles.length > 0) setActiveFileId(newFiles[newFiles.length - 1].id)
   }, [loadDroppedFiles])
+
+  // Combined view of everything in the project — used to find all playbook
+  // candidates so the switcher (and ResolveView) agree on what's available.
+  const playbookProjectModel = useMemo(() => buildProjectModel(
+    [{ id: '__main__', name: mainPath, content: texts.playbook }, ...extraFiles],
+  ), [mainPath, texts.playbook, extraFiles])
+  const playbookCandidates = playbookProjectModel.playbookCandidates
+
+  // Promote a different playbook to "main" — swaps content with whatever's
+  // currently in extraFiles under that name, preserving edits on both sides.
+  // 'main' stays a fixed UI sentinel (Monaco/FileExplorer/language-detection
+  // all branch on activeFileId === 'main'); only the content + mainPath label
+  // move.
+  const handleSwitchPlaybook = useCallback((targetName) => {
+    if (!targetName || targetName === mainPath) return
+    const targetFile = extraFiles.find((f) => f.name === targetName)
+    if (!targetFile) return
+    setExtraFiles((prev) => {
+      const withoutTarget = prev.filter((f) => f.id !== targetFile.id)
+      let oldMainName = mainPath
+      if (withoutTarget.some((f) => f.name === oldMainName)) {
+        const dot = oldMainName.lastIndexOf('.')
+        oldMainName = dot === -1 ? `${oldMainName} (1)` : `${oldMainName.slice(0, dot)} (1)${oldMainName.slice(dot)}`
+      }
+      return [...withoutTarget, { id: `swap-${Date.now()}`, name: oldMainName, content: texts.playbook }]
+    })
+    setTexts((prev) => ({ ...prev, playbook: targetFile.content }))
+    setMainPath(targetName)
+    setActiveFileId((prev) => (prev === targetFile.id ? 'main' : prev))
+  }, [extraFiles, texts.playbook, mainPath])
 
   const { isDragging, isProcessing: isProcessingResolveDrop, error: resolveDropError, dropProps } = useFileDrop(handleDropFiles)
 
@@ -901,6 +1009,7 @@ export default function App() {
           <InventoryLab
             initialShareState={limitsShareState}
             onShareStateChange={setLimitsShareState}
+            onSyncToPlaybook={handleSyncInventoryToPlaybook}
           />
         )}
 
@@ -934,14 +1043,19 @@ export default function App() {
             {mode === 'playbook' && (
               <div data-tour="file-explorer" className="contents">
                 <FileExplorer
-                  files={[{ id: 'main', name: 'playbook.yml' }, ...extraFiles]}
+                  files={[{ id: 'main', name: mainPath }, ...extraFiles]}
+                  folders={extraFolders}
                   activeId={activeFileId}
                   onSwitch={setActiveFileId}
                   onAdd={handleAddFile}
                   onAddNamed={handleAddFileNamed}
                   onRemove={handleRemoveFile}
                   onRename={handleRenameFile}
+                  onRenameMain={handleRenameMain}
                   onReorder={handleReorderFile}
+                  onAddFolder={handleAddFolder}
+                  onRenameFolder={handleRenameFolder}
+                  onRemoveFolder={handleRemoveFolder}
                   nodes={nodes}
                   fileErrors={fileErrors}
                   isMobile={isMobile}
@@ -1008,6 +1122,17 @@ export default function App() {
                   {viewMode === key && <span className="absolute left-2 right-2 -bottom-px h-0.5 rounded-full bg-cyan-400" />}
                 </button>
               ))}
+              <div className="flex-1" />
+              {playbookCandidates.length > 1 && (
+                <Select
+                  icon={Layers}
+                  value={mainPath}
+                  onChange={handleSwitchPlaybook}
+                  options={playbookCandidates}
+                  getValue={(o) => o.path}
+                  getLabel={(o) => o.path}
+                />
+              )}
             </div>
 
             {/* Content */}
@@ -1051,6 +1176,7 @@ export default function App() {
               <div className="flex w-full flex-col overflow-hidden h-[80vh] animate-fade-up md:h-auto md:flex-1 md:min-h-0">
                 <ResolveView
                   mainPlaybook={debouncedPlaybook}
+                  mainPath={mainPath}
                   extraFiles={extraFiles}
                   facts={facts}
                   onFactsChange={setFacts}
@@ -1282,6 +1408,12 @@ function LandingScreen({
             </p>
           )}
         </div>
+
+        <ImportControls
+          onFiles={onDropFiles}
+          onError={setDropError}
+          onBusyChange={setIsProcessingDrop}
+        />
 
         <div className="flex items-center gap-3 w-full max-w-xs">
           <div className="flex-1 h-px bg-slate-800" />

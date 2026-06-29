@@ -12,7 +12,7 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  FolderInput, Server, Layers, Users, Filter, Variable,
+  FolderInput, Server, Users, Filter, Variable,
   ArrowRightLeft, Zap, AlertTriangle, ChevronRight, X, ExternalLink, Loader2,
 } from 'lucide-react'
 import { buildProjectModel, parseYamlSafe } from '../lib/projectModel'
@@ -21,10 +21,11 @@ import {
   resolveHostVars, extractRuntimeVars, collectReferencedVars, LEVEL_LABEL,
 } from '../lib/precedence'
 import { renderJinja2 } from '../lib/jinja2Engine'
-import { readFolderInput } from '../lib/useFileDrop'
 import ExtraVarsPanel from './ExtraVarsPanel'
 import RuntimeMocksPanel from './RuntimeMocksPanel'
 import MockContextPanel from './MockContextPanel'
+import Select from './Select'
+import ImportControls from './ImportControls'
 
 /** When the project has no inventory, derive a single representative host from
  *  the active playbook's hosts patterns so play/role/-e vars still resolve. */
@@ -78,47 +79,28 @@ function LevelChip({ level }) {
   )
 }
 
-function Select({ icon: Icon, value, onChange, options, getLabel = (o) => o, getValue = (o) => o, placeholder }) {
-  return (
-    <label className="flex items-center gap-1.5 rounded border border-slate-700 bg-slate-900 px-2 py-1 min-w-0">
-      <Icon size={12} className="text-slate-500 shrink-0" />
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="bg-transparent text-[11px] font-mono text-slate-200 outline-none min-w-0 max-w-[200px]"
-      >
-        {placeholder && <option value="">{placeholder}</option>}
-        {options.map((o) => (
-          <option key={getValue(o)} value={getValue(o)}>{getLabel(o)}</option>
-        ))}
-      </select>
-    </label>
-  )
-}
-
 // Persist the resolver's selections so they survive tab switches AND reloads.
 const LS_RESOLVER = 'ansible101:resolver'
 function loadResolverState() {
   try { return JSON.parse(globalThis.localStorage.getItem(LS_RESOLVER)) || {} } catch { return {} }
 }
 
-export default function ResolveView({ mainPlaybook = '', mainName = 'playbook.yml', extraFiles = [], facts = {}, onFactsChange, onUseInFlow, onOpenInJinja2, onAddFiles, dropProps = {}, isDragging = false, isProcessing = false, dropError = null }) {
+export default function ResolveView({ mainPlaybook = '', mainPath = 'playbook.yml', extraFiles = [], facts = {}, onFactsChange, onUseInFlow, onOpenInJinja2, onAddFiles, dropProps = {}, isDragging = false, isProcessing = false, dropError = null }) {
   const persisted = useMemo(() => loadResolverState(), [])
   // The Resolve and Flow tabs share the same content: the main editor buffer
   // (mainPlaybook) plus any dropped project files. Extra files take precedence
   // on a name clash (a dropped playbook.yml overrides the sample buffer).
   const allFiles = useMemo(() => {
     const arr = []
-    if (mainPlaybook && mainPlaybook.trim()) arr.push({ id: '__main__', name: mainName, content: mainPlaybook })
+    if (mainPlaybook && mainPlaybook.trim()) arr.push({ id: '__main__', name: mainPath, content: mainPlaybook })
     return [...arr, ...extraFiles]
-  }, [mainPlaybook, mainName, extraFiles])
+  }, [mainPlaybook, mainPath, extraFiles])
 
   const projectModel = useMemo(() => buildProjectModel(allFiles), [allFiles])
   const invCandidates = projectModel.inventoryCandidates
   const pbCandidates = projectModel.playbookCandidates
 
   const [invPath, setInvPath] = useState(persisted.invPath ?? '')
-  const [pbPath, setPbPath] = useState(persisted.pbPath ?? '')
   const [host, setHost] = useState(persisted.host ?? '')
   const [picked, setPicked] = useState(persisted.picked ?? [])
   const [pairs, setPairs] = useState(persisted.pairs ?? [])
@@ -140,17 +122,18 @@ export default function ResolveView({ mainPlaybook = '', mainName = 'playbook.ym
   useEffect(() => {
     try {
       globalThis.localStorage.setItem(LS_RESOLVER, JSON.stringify({
-        invPath, pbPath, host, picked, pairs, mocks, filter, referencedOnly, showFacts,
+        invPath, host, picked, pairs, mocks, filter, referencedOnly, showFacts,
       }))
     } catch { /* storage blocked */ }
-  }, [invPath, pbPath, host, picked, pairs, mocks, filter, referencedOnly, showFacts])
+  }, [invPath, host, picked, pairs, mocks, filter, referencedOnly, showFacts])
 
   // Auto-pick defaults only when the persisted/current choice isn't a valid
   // candidate (keeps a restored selection if it still exists in the project).
   useEffect(() => { setInvPath((p) => (invCandidates.some((c) => c.path === p) ? p : (invCandidates[0]?.path ?? ''))) }, [invCandidates])
-  useEffect(() => { setPbPath((p) => (pbCandidates.some((c) => c.path === p) ? p : (pbCandidates[0]?.path ?? ''))) }, [pbCandidates])
 
-  const activePlaybook = useMemo(() => pbCandidates.find((p) => p.path === pbPath) ?? null, [pbCandidates, pbPath])
+  // Which playbook we resolve against is the single, shared active playbook
+  // (switched via the toolbar) — not an independent local choice.
+  const activePlaybook = useMemo(() => pbCandidates.find((p) => p.path === mainPath) ?? null, [pbCandidates, mainPath])
 
   const inventoryData = useMemo(() => {
     const content = invPath ? projectModel.files[invPath] : ''
@@ -215,11 +198,12 @@ export default function ResolveView({ mainPlaybook = '', mainName = 'playbook.ym
   const onMockChange = useCallback((name, value) => setMocks((m) => ({ ...m, [name]: value })), [])
   const togglePick = useCallback((f) => setPicked((p) => (p.includes(f) ? p.filter((x) => x !== f) : [...p, f])), [])
 
-  const handleFolderPick = useCallback(async (e) => {
-    const results = await readFolderInput(e.target.files)
-    if (results.length) onAddFiles?.(results)
-    e.target.value = ''
-  }, [onAddFiles])
+  // Click-driven import (ImportControls) reports its own busy/error state,
+  // merged with the drag-and-drop ones for a single display below.
+  const [clickBusy, setClickBusy] = useState(false)
+  const [clickError, setClickError] = useState(null)
+  const busy = isProcessing || clickBusy
+  const importError = dropError || clickError
 
   const handoffContext = useCallback(() => {
     // raw winner values keyed by name — feeds Flow / Jinja2 mock context
@@ -238,31 +222,31 @@ export default function ResolveView({ mainPlaybook = '', mainName = 'playbook.ym
         {...dropProps}
         className={`flex h-full flex-col items-center justify-center gap-5 px-6 text-center transition-colors ${isDragging ? 'bg-cyan-950/30' : ''}`}
       >
-        {isProcessing ? (
+        {busy ? (
           <Loader2 size={40} className="text-cyan-400 animate-spin" />
         ) : (
           <FolderInput size={40} className="text-slate-600" />
         )}
         <div>
           <p className="text-slate-300 font-mono text-sm">
-            {isProcessing ? 'Reading project files…' : 'Drop an Ansible project folder'}
+            {busy ? 'Reading project files…' : 'Drop an Ansible project folder'}
           </p>
           <p className="text-slate-500 font-mono text-[11px] mt-1 max-w-md">
             inventory · group_vars/ · host_vars/ · roles/ · vendored collections — structure is preserved
             so every variable resolves through Ansible precedence.
           </p>
-          {dropError && (
+          {importError && (
             <p className="text-red-400 font-mono text-[11px] mt-2 flex items-center justify-center gap-1.5">
               <AlertTriangle size={12} className="shrink-0" />
-              {dropError}
+              {importError}
             </p>
           )}
         </div>
-        <label className="cursor-pointer flex items-center gap-2 px-4 py-2 rounded-lg border border-cyan-700 bg-cyan-950/40 hover:bg-cyan-950/70 hover:border-cyan-500 text-cyan-300 text-sm font-mono transition-all">
-          <FolderInput size={14} />
-          Choose project folder
-          <input type="file" webkitdirectory="" directory="" multiple className="hidden" onChange={handleFolderPick} />
-        </label>
+        <ImportControls
+          onFiles={onAddFiles}
+          onError={setClickError}
+          onBusyChange={setClickBusy}
+        />
         <p className="text-slate-600 font-mono text-[10px]">…or drop a folder / .zip anywhere here</p>
       </div>
     )
@@ -295,9 +279,6 @@ export default function ResolveView({ mainPlaybook = '', mainName = 'playbook.ym
                 <Server size={12} /> synthetic inventory
               </span>
             )}
-            <Select icon={Layers} value={pbPath} onChange={setPbPath}
-              options={pbCandidates} getValue={(o) => o.path} getLabel={(o) => o.path}
-              placeholder={pbCandidates.length ? 'inventory only' : 'no playbook found'} />
             <Select icon={Server} value={host} onChange={setHost} options={hosts}
               placeholder={hosts.length ? undefined : 'no hosts'} />
           </div>
