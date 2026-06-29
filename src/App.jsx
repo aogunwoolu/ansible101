@@ -1349,6 +1349,7 @@ export default function App() {
                   onUseInFlow={handleUseInFlow}
                   onOpenInJinja2={handleOpenInJinja2}
                   onAddFiles={handleDropFiles}
+                  onOpenLimits={() => handleSetMode('limits')}
                   dropProps={dropProps}
                   isDragging={isDragging}
                   isProcessing={isProcessingResolveDrop}

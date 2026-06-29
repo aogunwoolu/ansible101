@@ -13,7 +13,7 @@ import React, { useState, useMemo, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import {
   FolderInput, Server, Users, Filter, Variable,
-  ArrowRightLeft, Zap, AlertTriangle, ChevronRight, X, ExternalLink, Loader2,
+  ArrowRightLeft, Zap, AlertTriangle, ChevronRight, X, ExternalLink, Loader2, FlaskConical,
 } from 'lucide-react'
 import { buildProjectModel } from '../lib/projectModel'
 import {
@@ -55,7 +55,7 @@ function loadResolverState() {
 }
 
 export default function ResolveView({
-  mainPlaybook = '', mainPath = 'playbook.yml', extraFiles = [], facts = {}, onFactsChange, onUseInFlow, onOpenInJinja2, onAddFiles, dropProps = {}, isDragging = false, isProcessing = false, dropError = null,
+  mainPlaybook = '', mainPath = 'playbook.yml', extraFiles = [], facts = {}, onFactsChange, onUseInFlow, onOpenInJinja2, onAddFiles, onOpenLimits, dropProps = {}, isDragging = false, isProcessing = false, dropError = null,
   invPath, onInvPathChange, host, onHostChange, inventoryData, hosts,
   picked, setPicked, pairs, setPairs, mocks, setMocks, extraVarsLayers,
 }) {
@@ -206,10 +206,21 @@ export default function ResolveView({
         {inventoryData.synthetic && (
           <div className="flex items-start gap-1.5 rounded border border-amber-900/50 bg-amber-950/10 px-2.5 py-1.5 text-[10px] font-mono text-amber-300/90">
             <AlertTriangle size={11} className="mt-px shrink-0" />
-            <span>
+            <span className="flex-1">
               No inventory in this project — resolving against a synthetic <span className="text-amber-200">example-host</span> derived
               from the playbook&apos;s <code className="text-amber-200">hosts:</code>. Add an inventory (drop a folder, or add an
               <code className="text-amber-200"> inventory</code> file) to resolve real group_vars / host_vars.
+              {onOpenLimits && (
+                <>
+                  {' '}Just want to test a single inventory file?{' '}
+                  <button
+                    onClick={onOpenLimits}
+                    className="inline-flex items-center gap-1 text-emerald-300 hover:text-emerald-200 underline underline-offset-2"
+                  >
+                    <FlaskConical size={10} /> Open Limits Lab
+                  </button>
+                </>
+              )}
             </span>
           </div>
         )}
@@ -267,27 +278,6 @@ export default function ResolveView({
           </div>
         )}
 
-        {/* filters */}
-        <div data-tour="resolver-filters" className="flex flex-wrap items-center gap-2">
-          <label className="flex items-center gap-1.5 rounded border border-slate-700 bg-slate-900 px-2 py-1 flex-1 min-w-[140px]">
-            <Filter size={12} className="text-slate-500 shrink-0" />
-            <input
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-              placeholder="filter variables…"
-              className="bg-transparent text-[11px] font-mono text-slate-200 outline-none w-full placeholder:text-slate-600"
-            />
-          </label>
-          <label className="flex items-center gap-1.5 text-[10px] font-mono text-slate-400 cursor-pointer">
-            <input type="checkbox" checked={referencedOnly} onChange={(e) => setReferencedOnly(e.target.checked)} />
-            referenced only
-          </label>
-          <label className="flex items-center gap-1.5 text-[10px] font-mono text-slate-400 cursor-pointer">
-            <input type="checkbox" checked={showFacts} onChange={(e) => setShowFacts(e.target.checked)} />
-            show facts
-          </label>
-        </div>
-
         {/* extra vars */}
         <div data-tour="resolver-extravars">
           <ExtraVarsPanel
@@ -307,6 +297,33 @@ export default function ResolveView({
             <MockContextPanel facts={facts} onFactsChange={onFactsChange} defaultCollapsed />
           )}
         </div>
+      </div>
+
+      {/* Filters — sits directly above the variable list it controls, so the
+          connection between "search box" and "list below" is unambiguous. */}
+      <div data-tour="resolver-filters" className="shrink-0 flex flex-wrap items-center gap-2 border-b border-slate-800 bg-slate-950 px-3 py-1.5">
+        <label className="flex items-center gap-1.5 rounded border border-slate-700 bg-slate-900 px-2 py-1 flex-1 min-w-[160px]">
+          <Filter size={12} className="text-slate-500 shrink-0" />
+          <input
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder="search variable names…"
+            className="bg-transparent text-[11px] font-mono text-slate-200 outline-none w-full placeholder:text-slate-600"
+          />
+        </label>
+        <label className="flex items-center gap-1.5 text-[10px] font-mono text-slate-400 cursor-pointer">
+          <input type="checkbox" checked={referencedOnly} onChange={(e) => setReferencedOnly(e.target.checked)} />
+          referenced only
+        </label>
+        <label className="flex items-center gap-1.5 text-[10px] font-mono text-slate-400 cursor-pointer">
+          <input type="checkbox" checked={showFacts} onChange={(e) => setShowFacts(e.target.checked)} />
+          show facts
+        </label>
+        {host && (
+          <span className="text-[10px] font-mono text-slate-500 shrink-0">
+            {rows.length} variable{rows.length === 1 ? '' : 's'}
+          </span>
+        )}
       </div>
 
       {/* Body: table (+ desktop stack panel; mobile uses a bottom drawer) */}
