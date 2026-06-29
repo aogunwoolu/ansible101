@@ -13,6 +13,81 @@ import {
 } from 'lucide-react'
 import jsyaml from 'js-yaml'
 import { generateExplanation, generatePlaySummary } from '../lib/humanSpeak'
+import { resolveHostVars, LEVEL_LABEL } from '../lib/precedence'
+import { renderJinja2 } from '../lib/jinja2Engine'
+
+// Same {{ var }} / when-expression pattern precedence.js's collectReferencedVars
+// uses, scoped to just the selected task instead of the whole project.
+const VAR_REF_RE = /\{\{[\s-]*([a-zA-Z_]\w*)|(?:if|elif|when|for\s+\w+\s+in)\s+([a-zA-Z_]\w*)/g
+function referencedVarsInTask(task) {
+  const found = new Set()
+  let blob
+  try { blob = JSON.stringify(task) } catch { return found }
+  let m
+  VAR_REF_RE.lastIndex = 0
+  while ((m = VAR_REF_RE.exec(blob)) !== null) {
+    const n = m[1] || m[2]
+    if (n) found.add(n)
+  }
+  return found
+}
+
+function formatVarValue(value) {
+  if (value === undefined) return '⟨undefined⟩'
+  if (typeof value === 'string') return value
+  try { return JSON.stringify(value) } catch { return String(value) }
+}
+
+function contextFromResolution(resolution) {
+  const ctx = {}
+  if (resolution) for (const [k, info] of Object.entries(resolution.vars)) ctx[k] = info.winner.value
+  return ctx
+}
+
+/** Render `{{ expr }}` against a resolution's winning values. Returns the
+ *  rendered string, or null if it didn't fully resolve (still has template
+ *  syntax left, or errored). */
+function tryRenderExpr(expr, resolution) {
+  if (!resolution) return null
+  const { result, error } = renderJinja2(expr, contextFromResolution(resolution))
+  if (error || result === undefined || result === null) return null
+  if (/\{\{|\{%/.test(result)) return null
+  return result
+}
+
+const TEMPLATE_EXPR_RE = /\{\{[\s\S]*?\}\}/g
+
+/** Splits explanation text on `{{ ... }}` and annotates each with its
+ *  resolved value at this step — "{{ app_port }} → 8080" — instead of
+ *  leaving the raw expression to be explained separately below. */
+function annotateTemplates(text, resolution, fullResolution) {
+  if (!text || !resolution) return text
+  const nodes = []
+  let last = 0
+  let m
+  TEMPLATE_EXPR_RE.lastIndex = 0
+  while ((m = TEMPLATE_EXPR_RE.exec(text)) !== null) {
+    if (m.index > last) nodes.push(text.slice(last, m.index))
+    const expr = m[0]
+    const atStage = tryRenderExpr(expr, resolution)
+    const atFull = atStage === null ? tryRenderExpr(expr, fullResolution) : null
+    nodes.push(
+      <span key={m.index} className="whitespace-nowrap">
+        <span className="text-slate-400">{expr}</span>
+        {atStage !== null ? (
+          <span className="text-emerald-300"> → {atStage}</span>
+        ) : atFull !== null ? (
+          <span className="text-orange-400/80 italic"> → not set yet</span>
+        ) : (
+          <span className="text-red-400/70 italic"> → never resolves</span>
+        )}
+      </span>,
+    )
+    last = TEMPLATE_EXPR_RE.lastIndex
+  }
+  nodes.push(text.slice(last))
+  return nodes
+}
 
 const ICON_MAP = {
   package: Package,
@@ -55,10 +130,46 @@ function TaskSnippet({ task }) {
   )
 }
 
-function ExplanationCard({ task, isSelected }) {
+function ExplanationCard({
+  task, isSelected, stage, host, projectModel, activePlaybook, inventoryData, invPath, facts, extraVarsLayers, mocks,
+}) {
   if (!task) return null
   const [showSnippet, setShowSnippet] = useState(false)
   const { text, warning, icon, docUrl } = generateExplanation(task)
+
+  const referencedNames = React.useMemo(() => referencedVarsInTask(task), [task])
+  const hasHostCtx = Boolean(host && projectModel && activePlaybook) && referencedNames.size > 0
+
+  // Stage-limited (what this task would actually see) vs. full resolution
+  // (would it EVER resolve for this host) — lets us tell "not set yet" apart
+  // from "this variable never resolves for the selected host" (e.g. the
+  // owning play's `hosts:` pattern doesn't match the current host at all).
+  const resolution = React.useMemo(() => {
+    if (!hasHostCtx) return null
+    return resolveHostVars(host, {
+      projectModel, inventoryData, inventoryPath: invPath || '(synthetic)', activePlaybook,
+      facts, stopAtStage: stage, extraVarsLayers, runtimeMocks: mocks,
+    })
+  }, [hasHostCtx, host, projectModel, activePlaybook, inventoryData, invPath, facts, stage, extraVarsLayers, mocks])
+
+  const fullResolution = React.useMemo(() => {
+    if (!hasHostCtx) return null
+    return resolveHostVars(host, {
+      projectModel, inventoryData, inventoryPath: invPath || '(synthetic)', activePlaybook,
+      facts, extraVarsLayers, runtimeMocks: mocks,
+    })
+  }, [hasHostCtx, host, projectModel, activePlaybook, inventoryData, invPath, facts, extraVarsLayers, mocks])
+
+  // Names already annotated inline in the explanation text (e.g. "{{ app_port }}
+  // → 8080" right there in the sentence) — don't repeat them below too.
+  const inlineNames = React.useMemo(() => {
+    const found = new Set()
+    const re = /\{\{[\s-]*([a-zA-Z_]\w*)/g
+    let m
+    while ((m = re.exec(text)) !== null) found.add(m[1])
+    return found
+  }, [text])
+  const footerNames = [...referencedNames].filter((n) => !inlineNames.has(n))
 
   return (
     <div
@@ -74,10 +185,13 @@ function ExplanationCard({ task, isSelected }) {
           {task.name}
         </div>
       )}
-      {/* Explanation */}
+      {/* Explanation — {{ expr }} references are annotated inline with their
+          resolved value at this step, rather than only listed separately below. */}
       <div className="flex items-start gap-2">
         <LucideIcon name={icon} size={14} className="text-slate-400 mt-0.5 shrink-0" />
-        <p className="text-slate-200 text-xs leading-relaxed">{text}</p>
+        <p className="text-slate-200 text-xs leading-relaxed">
+          {resolution ? annotateTemplates(text, resolution, fullResolution) : text}
+        </p>
       </div>
       {/* Conditionals */}
       {task.when && (
@@ -107,6 +221,43 @@ function ExplanationCard({ task, isSelected }) {
           <p className="text-amber-300 text-xs leading-relaxed">{warning}</p>
         </div>
       )}
+      {/* Variables referenced by this task but NOT already shown inline above
+          (e.g. used in a loop/when expression rather than the explanation text) */}
+      {resolution && footerNames.length > 0 && (
+        <div className="mt-2 pt-2 border-t border-slate-700/60">
+          <div className="text-slate-500 text-[10px] font-mono uppercase tracking-wider mb-1.5">
+            Also referenced
+          </div>
+          <div className="flex flex-col gap-1">
+            {footerNames.sort().map((name) => {
+              const info = resolution.vars[name]
+              const fullInfo = fullResolution?.vars[name]
+              return (
+                <div key={name} className="flex items-start gap-2 text-xs font-mono">
+                  <span className="text-cyan-300 shrink-0">{name}</span>
+                  {info ? (
+                    <>
+                      <span className="text-slate-300 break-all min-w-0">{formatVarValue(info.winner.value)}</span>
+                      <span
+                        title={LEVEL_LABEL[info.winner.level]}
+                        className="ml-auto shrink-0 text-[9px] px-1 py-px rounded bg-slate-800 border border-slate-700 text-slate-500"
+                      >
+                        L{info.winner.level}
+                      </span>
+                    </>
+                  ) : fullInfo ? (
+                    <span className="text-orange-400/80 italic">not set yet at this point</span>
+                  ) : (
+                    <span className="text-red-400/70 italic" title="No source (role defaults, group/host vars, play vars, set_fact, etc.) defines this for the selected host">
+                      never resolves for this host
+                    </span>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
       {/* Bottom row: snippet toggle + docs link */}
       <div className="mt-2 flex items-center gap-3">
         <button
@@ -134,14 +285,25 @@ function ExplanationCard({ task, isSelected }) {
   )
 }
 
-export default function HumanSidebar({ plays, selectedNode }) {
+export default function HumanSidebar({
+  plays, nodes, selectedNode, projectModel, activePlaybook, host, inventoryData, invPath, facts, extraVarsLayers, mocks,
+}) {
   const selectedNodeData = selectedNode?.data
   const selectedNodeType = selectedNode?.type
-  const allTasks = plays?.flatMap((p) => [
-    ...(p.pre_tasks || []),
-    ...(p.tasks || []),
-    ...(p.post_tasks || []),
-  ]) ?? []
+  // Built from the Flow graph's own nodes (not re-derived from `plays`) so
+  // every real task — including ones inside roles/includes — carries the
+  // same `stage` Flow assigned it, for incremental variable resolution.
+  const taskNodes = nodes?.filter((n) => n.data?.task) ?? []
+  const resolveCtx = { host, projectModel, activePlaybook, inventoryData, invPath, facts, extraVarsLayers, mocks }
+
+  // If no play's `hosts:` pattern matches the selected host at all, every
+  // variable card below will read as unresolved — say so once, up front,
+  // instead of leaving it to look like a stage-tracking bug.
+  const hostTargetsNoPlay = React.useMemo(() => {
+    if (!host || !projectModel || !activePlaybook) return false
+    const full = resolveHostVars(host, { projectModel, inventoryData, inventoryPath: invPath || '(synthetic)', activePlaybook, facts })
+    return full.plays.length === 0
+  }, [host, projectModel, activePlaybook, inventoryData, invPath, facts])
 
   return (
     <aside className="h-full flex flex-col bg-slate-900 border-l border-slate-700">
@@ -154,6 +316,8 @@ export default function HumanSidebar({ plays, selectedNode }) {
       </div>
 
       <div className="flex-1 overflow-y-auto p-3">
+        {hostTargetsNoPlay && <HostMismatchBanner host={host} />}
+
         {/* Play summaries */}
         {plays && plays.length > 0 && (
           <div className="mb-4">
@@ -186,25 +350,49 @@ export default function HumanSidebar({ plays, selectedNode }) {
             <div className="text-slate-500 text-xs font-mono mb-2 uppercase tracking-wider">
               Selected Task
             </div>
-            <ExplanationCard task={selectedNodeData.task} isSelected />
+            <ExplanationCard task={selectedNodeData.task} stage={selectedNodeData.stage} isSelected {...resolveCtx} />
           </>
         ) : selectedNodeType !== 'missingFileNode' && selectedNodeType !== 'includeNode' && !selectedNodeData?.task ? (
           <>
             <div className="text-slate-500 text-xs font-mono mb-2 uppercase tracking-wider">
               All Tasks
             </div>
-            {allTasks.length === 0 && (
+            {taskNodes.length === 0 && (
               <p className="text-slate-600 text-xs italic">
                 Write or paste an Ansible playbook in the editor to see explanations here.
               </p>
             )}
-            {allTasks.map((task, i) => (
-              <ExplanationCard key={i} task={task} isSelected={false} />
+            {taskNodes.map((n) => (
+              <ExplanationCard key={n.id} task={n.data.task} stage={n.data.stage} isSelected={false} {...resolveCtx} />
             ))}
           </>
         ) : null}
       </div>
     </aside>
+  )
+}
+
+function HostMismatchBanner({ host }) {
+  const [expanded, setExpanded] = useState(false)
+  return (
+    <div className="mb-4 rounded border border-orange-700 bg-orange-950/40">
+      <button
+        onClick={() => setExpanded((v) => !v)}
+        className="w-full flex items-center gap-2 px-2.5 py-1.5 text-orange-300 text-[11px] font-mono font-semibold text-left"
+      >
+        {expanded ? <ChevronDown size={10} className="shrink-0" /> : <ChevronRight size={10} className="shrink-0" />}
+        <AlertTriangle size={12} className="shrink-0" />
+        <span className="truncate">Host &quot;{host}&quot; isn&apos;t targeted by any play</span>
+      </button>
+      {expanded && (
+        <p className="text-orange-200/80 text-xs leading-relaxed px-2.5 pb-2.5">
+          None of this playbook&apos;s plays match the selected host&apos;s groups — in real Ansible
+          this play would never run against it. Variable values below are shown as a
+          best-effort fallback (play/role vars, not host-specific group_vars/host_vars); switch
+          the host or inventory in the Variable Resolver tab to verify for real.
+        </p>
+      )}
+    </div>
   )
 }
 

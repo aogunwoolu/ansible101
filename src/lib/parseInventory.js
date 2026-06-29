@@ -319,6 +319,24 @@ export function parseInventoryText(text) {
   }
 }
 
+/** When a project has no inventory, derive a single representative host from
+ *  the active playbook's hosts patterns so play/role/-e vars still resolve. */
+export function syntheticInventory(plays) {
+  const host = 'example-host'
+  const groups = { all: [host] }
+  for (const p of (plays || [])) {
+    const pat = Array.isArray(p?.hosts) ? p.hosts.join(':') : String(p?.hosts ?? '')
+    for (const tok of pat.split(/[:,&!]/)) {
+      const t = tok.trim().replace(/[*?[\]]/g, '')
+      if (t && t !== 'all' && t !== '*' && /^[\w.-]+$/.test(t)) {
+        if (!groups[t]) groups[t] = []
+        if (!groups[t].includes(host)) groups[t].push(host)
+      }
+    }
+  }
+  return { groups, groupvars: {}, hostvars: {}, synthetic: true }
+}
+
 /**
  * Inverse of parseInventoryText's JSON branch — serializes {groups, hostvars}
  * back into `ansible-inventory --list`-shaped JSON text, so Limits Lab's

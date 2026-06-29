@@ -15,11 +15,34 @@ import React, { useRef, useState, useMemo, useCallback, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import {
   ChevronDown, ChevronRight, Plus, Pencil, X, AlertTriangle,
-  Trash2, FilePlus, FolderPlus,
+  Trash2, FilePlus, FolderPlus, Folder, FolderOpen, EyeOff,
 } from 'lucide-react'
 import { isValidRelativePath } from '../lib/filePaths'
 
 /* ─── helpers ──────────────────────────────────────────────── */
+
+// Folders that are rarely useful to browse in an Ansible project — dimmed
+// and (like everything else) collapsed by default rather than hidden, so
+// they don't visually compete with roles/group_vars/etc.
+const LOW_VALUE_FOLDER_NAMES = new Set([
+  'node_modules', '__pycache__', 'dist', 'build', 'venv', 'env',
+])
+function isLowValueFolder(name) {
+  return name.startsWith('.') || LOW_VALUE_FOLDER_NAMES.has(name.toLowerCase())
+}
+
+/** Human-readable explanation of where a missing reference came from. */
+function describeMissingRef(item) {
+  if (item.kind === 'role') {
+    return `Role used in play "${item.playLabel}". Ansible would look for it at roles/${item.roleName}/tasks/main.yml.`
+  }
+  if (item.kind === 'include_tasks' || item.kind === 'import_tasks') {
+    return item.taskName
+      ? `Referenced via ${item.kind} in task "${item.taskName}".`
+      : `Referenced via ${item.kind}.`
+  }
+  return 'Referenced by the playbook but not found in this project.'
+}
 
 function buildStatusMap(extraFiles, nodes) {
   const resolvedLabels = new Set(
@@ -49,7 +72,16 @@ function buildMissingRefs(extraFiles, nodes) {
     const filename = label.startsWith('role: ')
       ? `roles/${label.slice(6)}/tasks/main.yml`
       : label
-    if (!known.has(filename)) out.push({ label, filename })
+    if (!known.has(filename)) {
+      out.push({
+        label,
+        filename,
+        kind: n.data?.kind ?? null,
+        taskName: n.data?.taskName ?? null,
+        roleName: n.data?.roleName ?? null,
+        playLabel: n.data?.playLabel ?? null,
+      })
+    }
   })
   return out
 }
@@ -91,6 +123,8 @@ function subtreeHasMissing(node) {
 
 const padFor = (depth) => ({ paddingLeft: depth * 11 + 8 })
 
+const LS_OPEN_DIRS = 'ansible101:fileTreeOpenDirs'
+
 /* ─── context menu ───────────────────────────────────────── */
 
 /**
@@ -115,29 +149,35 @@ function ContextMenu({ x, y, items, onClose }) {
   }, [onClose])
 
   // Keep the menu on-screen near the click point.
-  const left = Math.min(x, globalThis.innerWidth - 180)
-  const top = Math.min(y, globalThis.innerHeight - items.length * 28 - 16)
+  const left = Math.min(x, globalThis.innerWidth - 220)
+  const top = Math.min(y, globalThis.innerHeight - items.length * 30 - 16)
 
   return createPortal(
     <div
       ref={ref}
       style={{ position: 'fixed', left: Math.max(4, left), top: Math.max(4, top), zIndex: 100 }}
-      className="min-w-[160px] rounded border border-slate-700 bg-slate-900 py-1 shadow-xl shadow-black/50"
+      className="min-w-[180px] max-w-[260px] rounded border border-slate-700 bg-slate-900 py-1 shadow-xl shadow-black/50"
     >
-      {items.map((item, i) => (item.divider ? (
-        <div key={`d${i}`} className="my-1 h-px bg-slate-800" />
-      ) : (
-        <button
-          key={item.label}
-          disabled={item.disabled}
-          onClick={() => { item.onSelect(); onClose() }}
-          className={`w-full flex items-center gap-2 px-3 py-1.5 text-left text-[11px] font-mono transition-colors
-            ${item.disabled ? 'opacity-40 cursor-not-allowed' : item.danger ? 'text-red-400 hover:bg-red-950/40' : 'text-slate-300 hover:bg-slate-800'}`}
-        >
-          {item.Icon && <item.Icon size={11} className="shrink-0" />}
-          {item.label}
-        </button>
-      )))}
+      {items.map((item, i) => (
+        item.divider ? (
+          <div key={`d${i}`} className="my-1 h-px bg-slate-800" />
+        ) : item.header ? (
+          <div key={`h${i}`} className="px-3 py-1.5 text-[10px] font-mono text-slate-500 whitespace-normal leading-snug">
+            {item.text}
+          </div>
+        ) : (
+          <button
+            key={item.label}
+            disabled={item.disabled}
+            onClick={() => { item.onSelect(); onClose() }}
+            className={`w-full flex items-center gap-2 px-3 py-1.5 text-left text-[11px] font-mono transition-colors
+              ${item.disabled ? 'opacity-40 cursor-not-allowed' : item.danger ? 'text-red-400 hover:bg-red-950/40' : 'text-slate-300 hover:bg-slate-800'}`}
+          >
+            {item.Icon && <item.Icon size={11} className="shrink-0" />}
+            {item.label}
+          </button>
+        )
+      ))}
     </div>,
     document.body,
   )
@@ -284,24 +324,24 @@ function FileRow({
   )
 }
 
-function MissingRow({ item, rel, depth = 0, onAdd }) {
+function MissingRow({ item, rel, depth = 0, onOpenMenu }) {
   return (
-    <div style={padFor(depth)} className="group flex items-center gap-1 pr-1 h-[24px] border-l-[2px] border-l-orange-700/40 hover:bg-orange-950/10 transition-colors">
-      <span className="flex-1 min-w-0 font-mono text-[10px] truncate text-orange-700/60" title={item.filename}>
+    <div
+      onClick={onOpenMenu}
+      onContextMenu={(e) => { e.preventDefault(); onOpenMenu(e) }}
+      style={padFor(depth)}
+      className="group flex items-center gap-1 pr-1 h-[24px] border-l-[2px] border-l-orange-700/40 hover:bg-orange-950/10 transition-colors cursor-pointer"
+      title="Click for details and options"
+    >
+      <AlertTriangle size={9} className="text-orange-700/60 shrink-0" />
+      <span className="flex-1 min-w-0 font-mono text-[10px] truncate text-orange-700/60">
         {rel}
       </span>
-      <button
-        onClick={onAdd}
-        className="shrink-0 flex items-center gap-px text-[8px] font-mono px-1 py-px rounded
-          text-orange-600 border border-orange-800/60 hover:border-orange-500 hover:text-orange-400 transition-all"
-      >
-        <Plus size={7} />add
-      </button>
     </div>
   )
 }
 
-function FolderRow({ path, name, open, onToggle, hasMissing, depth = 0, renaming, onRename, onCancelRename, onContextMenu, validate }) {
+function FolderRow({ path, name, open, onToggle, hasMissing, lowValue = false, depth = 0, renaming, onRename, onCancelRename, onContextMenu, validate }) {
   const inputRef = useRef(null)
   const [renameError, setRenameError] = useState(null)
 
@@ -333,6 +373,11 @@ function FolderRow({ path, name, open, onToggle, hasMissing, depth = 0, renaming
       >
         ▾
       </span>
+      {open ? (
+        <FolderOpen size={10} className={`shrink-0 ${lowValue ? 'text-slate-700' : 'text-blue-500/70'}`} />
+      ) : (
+        <Folder size={10} className={`shrink-0 ${lowValue ? 'text-slate-700' : 'text-blue-500/70'}`} />
+      )}
       {renaming ? (
         <input
           ref={inputRef}
@@ -347,7 +392,9 @@ function FolderRow({ path, name, open, onToggle, hasMissing, depth = 0, renaming
             ${renameError ? 'ring-red-500' : 'ring-cyan-500/40'}`}
         />
       ) : (
-        <span className="text-[9px] font-mono text-slate-500 group-hover:text-slate-400 truncate transition-colors flex-1 text-left">
+        <span className={`text-[9px] font-mono truncate transition-colors flex-1 text-left
+          ${lowValue ? 'text-slate-700 group-hover:text-slate-600' : 'text-slate-300 font-medium group-hover:text-slate-200'}`}
+        >
           {name}/
         </span>
       )}
@@ -369,7 +416,9 @@ function TreeLevel({ node, path, depth, openDirs, toggleDir, ctx }) {
       {dirNames.map((name) => {
         const childPath = path ? `${path}/${name}` : name
         const child = node.dirs.get(name)
-        const open = openDirs[childPath] !== false
+        // Folders start collapsed; openDirs only ever stores explicit
+        // overrides (persisted — see FileExplorer's localStorage effect).
+        const open = openDirs[childPath] === true
         return (
           <React.Fragment key={childPath}>
             <FolderRow
@@ -378,6 +427,7 @@ function TreeLevel({ node, path, depth, openDirs, toggleDir, ctx }) {
               open={open}
               onToggle={() => toggleDir(childPath)}
               hasMissing={subtreeHasMissing(child)}
+              lowValue={isLowValueFolder(name)}
               depth={depth}
               renaming={ctx.renamingFolderPath === childPath}
               onRename={(val) => { ctx.onRenameFolder(childPath, val); ctx.setRenamingFolderPath(null) }}
@@ -422,7 +472,19 @@ function TreeLevel({ node, path, depth, openDirs, toggleDir, ctx }) {
         />
       ))}
       {missing.map(({ item, base }) => (
-        <MissingRow key={item.filename} item={item} rel={base} depth={depth} onAdd={() => ctx.onAddNamed(item.filename)} />
+        <MissingRow
+          key={item.filename}
+          item={item}
+          rel={base}
+          depth={depth}
+          onOpenMenu={(e) => ctx.openMenu(e, [
+            { header: true, text: describeMissingRef(item) },
+            { divider: true },
+            { label: 'Add file', Icon: FilePlus, onSelect: () => ctx.onAddNamed(item.filename) },
+            { label: 'Ignore', Icon: EyeOff, onSelect: () => ctx.onIgnoreMissing(item.filename) },
+            { label: 'Ignore all missing', Icon: EyeOff, onSelect: () => ctx.onIgnoreAllMissing(ctx.allMissingFilenames) },
+          ])}
+        />
       ))}
     </>
   )
@@ -451,13 +513,21 @@ export default function FileExplorer({
   onAddFolder,
   onRenameFolder,
   onRemoveFolder,
+  ignoredMissing = [],
+  onIgnoreMissing,
+  onIgnoreAllMissing,
+  onUnignoreAllMissing,
   nodes = [],
   fileErrors = {},
   isMobile = false,
 }) {
   const [collapsed, setCollapsed] = useState(false)
   const [width, setWidth] = useState(140)
-  const [openDirs, setOpenDirs] = useState({})
+  // Which folders are expanded — persisted so it survives reloads/tab
+  // switches instead of resetting every time the explorer remounts.
+  const [openDirs, setOpenDirs] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(LS_OPEN_DIRS)) || {} } catch { return {} }
+  })
   const [dragId, setDragId] = useState(null)   // id being dragged
   const [overId, setOverId] = useState(null)   // id being hovered over
   const [renamingFileId, setRenamingFileId] = useState(null)
@@ -471,12 +541,20 @@ export default function FileExplorer({
   const extraFiles = useMemo(() => files.slice(1), [files])
 
   const statuses = useMemo(() => buildStatusMap(extraFiles, nodes), [extraFiles, nodes])
-  const missingRefs = useMemo(() => buildMissingRefs(extraFiles, nodes), [extraFiles, nodes])
+  const allMissingRefs = useMemo(() => buildMissingRefs(extraFiles, nodes), [extraFiles, nodes])
+  const missingRefs = useMemo(
+    () => allMissingRefs.filter((m) => !ignoredMissing.includes(m.filename)),
+    [allMissingRefs, ignoredMissing],
+  )
   const tree = useMemo(() => buildTree(extraFiles, statuses, missingRefs, folders), [extraFiles, statuses, missingRefs, folders])
 
   const toggleDir = useCallback((path) => {
-    setOpenDirs((prev) => ({ ...prev, [path]: prev[path] === false }))
+    setOpenDirs((prev) => ({ ...prev, [path]: prev[path] !== true }))
   }, [])
+
+  useEffect(() => {
+    try { localStorage.setItem(LS_OPEN_DIRS, JSON.stringify(openDirs)) } catch { /* storage blocked */ }
+  }, [openDirs])
 
   // Auto-open every ancestor folder that contains an unresolved missing ref
   useEffect(() => {
@@ -527,16 +605,20 @@ export default function FileExplorer({
     return null
   }, [files])
 
+  const allMissingFilenames = useMemo(() => missingRefs.map((m) => m.filename), [missingRefs])
+
   const treeCtx = useMemo(() => ({
     activeId, onSwitch, onRemove, onRename, onAddNamed, fileErrors,
     setDragId, setOverId, commitDrop, dragId, overId,
     renamingFileId, setRenamingFileId, validateRename,
     renamingFolderPath, setRenamingFolderPath, validateFolderRename,
     onAdd, onAddFolder, onRemoveFolder, onRenameFolder, openMenu,
+    onIgnoreMissing, onIgnoreAllMissing, allMissingFilenames,
   }), [
     activeId, onSwitch, onRemove, onRename, onAddNamed, fileErrors, commitDrop, dragId, overId,
     renamingFileId, validateRename, renamingFolderPath, validateFolderRename,
     onAdd, onAddFolder, onRemoveFolder, onRenameFolder, openMenu,
+    onIgnoreMissing, onIgnoreAllMissing, allMissingFilenames,
   ])
 
   const onResizeStart = useCallback((e) => {
@@ -651,6 +733,15 @@ export default function FileExplorer({
           <span className="flex items-center gap-px text-[8px] font-mono text-orange-700/80">
             <AlertTriangle size={7} />{missingRefs.length}
           </span>
+        )}
+        {ignoredMissing.length > 0 && (
+          <button
+            onClick={() => onUnignoreAllMissing?.()}
+            title="Show ignored missing references again"
+            className="flex items-center gap-px text-[8px] font-mono text-slate-600 hover:text-slate-400 transition-colors shrink-0"
+          >
+            <EyeOff size={7} />{ignoredMissing.length}
+          </button>
         )}
         <button onClick={() => onAddFolder()} title="New folder" className="p-0.5 text-slate-600 hover:text-cyan-400 transition-colors shrink-0">
           <FolderPlus size={10} />

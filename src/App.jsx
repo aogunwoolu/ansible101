@@ -35,8 +35,8 @@ import ResizeHandle from './components/ResizeHandle'
 import Select from './components/Select'
 import ImportControls from './components/ImportControls'
 import { useFileDrop, readDataTransferFiles } from './lib/useFileDrop'
-import { isProject, buildProjectModel } from './lib/projectModel'
-import { parseInventoryText, buildInventoryJson } from './lib/parseInventory'
+import { isProject, buildProjectModel, parseYamlSafe } from './lib/projectModel'
+import { parseInventoryText, buildInventoryJson, syntheticInventory } from './lib/parseInventory'
 import { isValidRelativePath, pathCollides } from './lib/filePaths'
 import { startTour } from './lib/tour'
 
@@ -193,6 +193,11 @@ export default function App() {
   // Folders with no files yet (created via "New folder") — purely an editor
   // organizational aid, not meaningful Ansible state, so session-only.
   const [extraFolders, setExtraFolders]             = useState([])
+  // Missing-reference filenames the user has dismissed via "Ignore" — persisted
+  // so dismissals stick across reloads.
+  const [ignoredMissingRefs, setIgnoredMissingRefs] = useState(() => {
+    try { return JSON.parse(globalThis.localStorage.getItem('ansible101:ignoredMissing')) || [] } catch { return [] }
+  })
   const [activeFileId, setActiveFileId]             = useState('main')
   // Real filename of whatever's currently in texts.playbook — lets FileExplorer
   // and the playbook switcher show/select the actual imported name instead of
@@ -207,8 +212,18 @@ export default function App() {
   const [showVarsPanel, setShowVarsPanel]           = useState(true)
   const [userVars, setUserVars]                     = useState({})
   const [limitsShareState, setLimitsShareState]     = useState(() => urlState?.limits ?? null)
-  const [viewMode, setViewMode]                     = useState('flow')   // playbook mode: 'flow' | 'resolve'
-  const userPickedView                              = useRef(false)
+  // Restore the last view tab (Flow/Resolve) across reloads — otherwise a
+  // refresh always lands back on Resolve once a project is detected (see the
+  // auto-switch effect below), discarding whichever tab the user was on.
+  const loadViewModeState = () => {
+    try { return JSON.parse(globalThis.localStorage.getItem('ansible101:viewMode')) ?? {} } catch { return {} }
+  }
+  const [viewMode, setViewMode]                     = useState(() => loadViewModeState().viewMode ?? 'flow')   // playbook mode: 'flow' | 'resolve'
+  const userPickedView                              = useRef(loadViewModeState().picked ?? false)
+
+  useEffect(() => {
+    try { globalThis.localStorage.setItem('ansible101:viewMode', JSON.stringify({ viewMode, picked: userPickedView.current })) } catch { /* storage blocked */ }
+  }, [viewMode])
   const [actionsMenuOpen, setActionsMenuOpen]       = useState(false)    // mobile/tablet "⋯" actions menu
   const actionsMenuRef                              = useRef(null)
 
@@ -718,6 +733,20 @@ export default function App() {
     setActiveFileId((prev) => (removedIds.has(prev) ? 'main' : prev))
   }, [extraFiles])
 
+  useEffect(() => {
+    try { globalThis.localStorage.setItem('ansible101:ignoredMissing', JSON.stringify(ignoredMissingRefs)) } catch { /* storage blocked */ }
+  }, [ignoredMissingRefs])
+
+  const handleIgnoreMissing = useCallback((filename) => {
+    setIgnoredMissingRefs((prev) => (prev.includes(filename) ? prev : [...prev, filename]))
+  }, [])
+
+  const handleIgnoreAllMissing = useCallback((filenames) => {
+    setIgnoredMissingRefs((prev) => [...new Set([...prev, ...filenames])])
+  }, [])
+
+  const handleUnignoreAllMissing = useCallback(() => setIgnoredMissingRefs([]), [])
+
   // Reorder a file by dragging it before another
   const handleReorderFile = useCallback((dragId, targetId) => {
     setExtraFiles((prev) => {
@@ -771,6 +800,68 @@ export default function App() {
     [{ id: '__main__', name: mainPath, content: texts.playbook }, ...extraFiles],
   ), [mainPath, texts.playbook, extraFiles])
   const playbookCandidates = playbookProjectModel.playbookCandidates
+
+  // Which playbook is active for resolution purposes — the same one driving
+  // Flow's graph (see handleSwitchPlaybook below).
+  const activePlaybook = useMemo(
+    () => playbookCandidates.find((p) => p.path === mainPath) ?? null,
+    [playbookCandidates, mainPath],
+  )
+
+  // Host/inventory selection + -e extra vars / runtime mocks — shared between
+  // the Variable Resolver tab and the Human Logic sidebar so both always
+  // show the same host's variables, the same way.
+  const loadResolverHost = () => {
+    try { return JSON.parse(globalThis.localStorage.getItem('ansible101:resolverHost')) ?? {} } catch { return {} }
+  }
+  const [invPath, setInvPath] = useState(() => loadResolverHost().invPath ?? '')
+  const [host, setHost] = useState(() => loadResolverHost().host ?? '')
+  const [picked, setPicked] = useState(() => loadResolverHost().picked ?? [])
+  const [pairs, setPairs] = useState(() => loadResolverHost().pairs ?? [])
+  const [mocks, setMocks] = useState(() => loadResolverHost().mocks ?? {})
+
+  useEffect(() => {
+    try { globalThis.localStorage.setItem('ansible101:resolverHost', JSON.stringify({ invPath, host, picked, pairs, mocks })) } catch { /* storage blocked */ }
+  }, [invPath, host, picked, pairs, mocks])
+
+  const extraVarsLayers = useMemo(() => {
+    const layers = picked.map((p) => ({
+      label: `@${p}`,
+      path: p,
+      vars: /\.json$/i.test(p)
+        ? (() => { try { return JSON.parse(playbookProjectModel.files[p] ?? '') || {} } catch { return {} } })()
+        : parseYamlSafe(playbookProjectModel.files[p] ?? ''),
+    }))
+    const kv = {}
+    for (const { key, value } of pairs) {
+      if (!key) continue
+      kv[key] = /^-?\d+$/.test(value) ? Number(value)
+        : /^-?\d*\.\d+$/.test(value) ? Number(value)
+        : /^(true|false)$/i.test(value) ? value.toLowerCase() === 'true'
+        : value
+    }
+    if (Object.keys(kv).length) layers.push({ label: '-e key=value', path: '(cli)', vars: kv })
+    return layers
+  }, [picked, pairs, playbookProjectModel])
+
+  const invCandidates = playbookProjectModel.inventoryCandidates
+  // Auto-pick defaults only when the persisted/current choice isn't a valid
+  // candidate (keeps a restored selection if it still exists in the project).
+  useEffect(() => { setInvPath((p) => (invCandidates.some((c) => c.path === p) ? p : (invCandidates[0]?.path ?? ''))) }, [invCandidates])
+
+  const inventoryData = useMemo(() => {
+    const content = invPath ? playbookProjectModel.files[invPath] : ''
+    if (content) {
+      const r = parseInventoryText(content)
+      if (r.groups) return r
+    }
+    // No inventory in the project — synthesize a host from the playbook so
+    // play/role/-e vars still resolve and the table isn't empty.
+    return syntheticInventory(activePlaybook?.plays)
+  }, [invPath, playbookProjectModel, activePlaybook])
+
+  const hosts = useMemo(() => [...new Set(Object.values(inventoryData.groups).flat())].sort(), [inventoryData])
+  useEffect(() => { setHost((h) => (hosts.includes(h) ? h : (hosts[0] ?? ''))) }, [hosts])
 
   // Promote a different playbook to "main" — swaps content with whatever's
   // currently in extraFiles under that name, preserving edits on both sides.
@@ -1056,6 +1147,10 @@ export default function App() {
                   onAddFolder={handleAddFolder}
                   onRenameFolder={handleRenameFolder}
                   onRemoveFolder={handleRemoveFolder}
+                  ignoredMissing={ignoredMissingRefs}
+                  onIgnoreMissing={handleIgnoreMissing}
+                  onIgnoreAllMissing={handleIgnoreAllMissing}
+                  onUnignoreAllMissing={handleUnignoreAllMissing}
                   nodes={nodes}
                   fileErrors={fileErrors}
                   isMobile={isMobile}
@@ -1143,6 +1238,7 @@ export default function App() {
                     {nodes.length > 0 ? (
                       <Suspense fallback={<FlowSkeleton />}>
                         <FlowCanvas
+                          key={mainPath}
                           nodes={nodes}
                           edges={edges}
                           onNodeClick={handleNodeClick}
@@ -1169,7 +1265,19 @@ export default function App() {
                   style={{ animationDelay: '40ms', ...(!isMobile ? { width: `${sidebarWidthPct}%`, minWidth: '180px' } : {}) }}
                   data-tour="human-sidebar"
                 >
-                  <HumanSidebar plays={plays} selectedNode={selectedNode} />
+                  <HumanSidebar
+                    plays={plays}
+                    nodes={nodes}
+                    selectedNode={selectedNode}
+                    projectModel={playbookProjectModel}
+                    activePlaybook={activePlaybook}
+                    host={host}
+                    inventoryData={inventoryData}
+                    invPath={invPath}
+                    facts={facts}
+                    extraVarsLayers={extraVarsLayers}
+                    mocks={mocks}
+                  />
                 </div>
               </div>
             ) : (
@@ -1187,6 +1295,19 @@ export default function App() {
                   isDragging={isDragging}
                   isProcessing={isProcessingResolveDrop}
                   dropError={resolveDropError}
+                  invPath={invPath}
+                  onInvPathChange={setInvPath}
+                  host={host}
+                  onHostChange={setHost}
+                  inventoryData={inventoryData}
+                  hosts={hosts}
+                  picked={picked}
+                  setPicked={setPicked}
+                  pairs={pairs}
+                  setPairs={setPairs}
+                  mocks={mocks}
+                  setMocks={setMocks}
+                  extraVarsLayers={extraVarsLayers}
                 />
               </div>
             )}

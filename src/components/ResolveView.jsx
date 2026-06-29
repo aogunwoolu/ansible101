@@ -15,8 +15,7 @@ import {
   FolderInput, Server, Users, Filter, Variable,
   ArrowRightLeft, Zap, AlertTriangle, ChevronRight, X, ExternalLink, Loader2,
 } from 'lucide-react'
-import { buildProjectModel, parseYamlSafe } from '../lib/projectModel'
-import { parseInventoryText } from '../lib/parseInventory'
+import { buildProjectModel } from '../lib/projectModel'
 import {
   resolveHostVars, extractRuntimeVars, collectReferencedVars, LEVEL_LABEL,
 } from '../lib/precedence'
@@ -26,36 +25,6 @@ import RuntimeMocksPanel from './RuntimeMocksPanel'
 import MockContextPanel from './MockContextPanel'
 import Select from './Select'
 import ImportControls from './ImportControls'
-
-/** When the project has no inventory, derive a single representative host from
- *  the active playbook's hosts patterns so play/role/-e vars still resolve. */
-function syntheticInventory(plays) {
-  const host = 'example-host'
-  const groups = { all: [host] }
-  for (const p of (plays || [])) {
-    const pat = Array.isArray(p?.hosts) ? p.hosts.join(':') : String(p?.hosts ?? '')
-    for (const tok of pat.split(/[:,&!]/)) {
-      const t = tok.trim().replace(/[*?[\]]/g, '')
-      if (t && t !== 'all' && t !== '*' && /^[\w.-]+$/.test(t)) {
-        if (!groups[t]) groups[t] = []
-        if (!groups[t].includes(host)) groups[t].push(host)
-      }
-    }
-  }
-  return { groups, groupvars: {}, hostvars: {}, synthetic: true }
-}
-
-function parseFile(content, path) {
-  if (/\.json$/i.test(path)) { try { return JSON.parse(content) || {} } catch { return {} } }
-  return parseYamlSafe(content)
-}
-
-function coerce(v) {
-  if (/^-?\d+$/.test(v)) return Number(v)
-  if (/^-?\d*\.\d+$/.test(v)) return Number(v)
-  if (/^(true|false)$/i.test(v)) return v.toLowerCase() === 'true'
-  return v
-}
 
 /** Render a value against the host context. Returns {raw, rendered, error, undef, unresolved}. */
 function renderVal(value, ctx) {
@@ -85,7 +54,11 @@ function loadResolverState() {
   try { return JSON.parse(globalThis.localStorage.getItem(LS_RESOLVER)) || {} } catch { return {} }
 }
 
-export default function ResolveView({ mainPlaybook = '', mainPath = 'playbook.yml', extraFiles = [], facts = {}, onFactsChange, onUseInFlow, onOpenInJinja2, onAddFiles, dropProps = {}, isDragging = false, isProcessing = false, dropError = null }) {
+export default function ResolveView({
+  mainPlaybook = '', mainPath = 'playbook.yml', extraFiles = [], facts = {}, onFactsChange, onUseInFlow, onOpenInJinja2, onAddFiles, dropProps = {}, isDragging = false, isProcessing = false, dropError = null,
+  invPath, onInvPathChange, host, onHostChange, inventoryData, hosts,
+  picked, setPicked, pairs, setPairs, mocks, setMocks, extraVarsLayers,
+}) {
   const persisted = useMemo(() => loadResolverState(), [])
   // The Resolve and Flow tabs share the same content: the main editor buffer
   // (mainPlaybook) plus any dropped project files. Extra files take precedence
@@ -100,11 +73,6 @@ export default function ResolveView({ mainPlaybook = '', mainPath = 'playbook.ym
   const invCandidates = projectModel.inventoryCandidates
   const pbCandidates = projectModel.playbookCandidates
 
-  const [invPath, setInvPath] = useState(persisted.invPath ?? '')
-  const [host, setHost] = useState(persisted.host ?? '')
-  const [picked, setPicked] = useState(persisted.picked ?? [])
-  const [pairs, setPairs] = useState(persisted.pairs ?? [])
-  const [mocks, setMocks] = useState(persisted.mocks ?? {})
   const [filter, setFilter] = useState(persisted.filter ?? '')
   const [referencedOnly, setReferencedOnly] = useState(persisted.referencedOnly ?? false)
   const [showFacts, setShowFacts] = useState(persisted.showFacts ?? false)
@@ -119,48 +87,24 @@ export default function ResolveView({ mainPlaybook = '', mainPath = 'playbook.ym
   }, [])
 
   // Persist selections (not the transient selected-var) on any change.
+  // invPath/host/picked/pairs/mocks are owned by App.jsx now (shared with
+  // Human Logic) and persisted separately there.
   useEffect(() => {
     try {
       globalThis.localStorage.setItem(LS_RESOLVER, JSON.stringify({
-        invPath, host, picked, pairs, mocks, filter, referencedOnly, showFacts,
+        filter, referencedOnly, showFacts,
       }))
     } catch { /* storage blocked */ }
-  }, [invPath, host, picked, pairs, mocks, filter, referencedOnly, showFacts])
-
-  // Auto-pick defaults only when the persisted/current choice isn't a valid
-  // candidate (keeps a restored selection if it still exists in the project).
-  useEffect(() => { setInvPath((p) => (invCandidates.some((c) => c.path === p) ? p : (invCandidates[0]?.path ?? ''))) }, [invCandidates])
+  }, [filter, referencedOnly, showFacts])
 
   // Which playbook we resolve against is the single, shared active playbook
   // (switched via the toolbar) — not an independent local choice.
   const activePlaybook = useMemo(() => pbCandidates.find((p) => p.path === mainPath) ?? null, [pbCandidates, mainPath])
 
-  const inventoryData = useMemo(() => {
-    const content = invPath ? projectModel.files[invPath] : ''
-    if (content) {
-      const r = parseInventoryText(content)
-      if (r.groups) return r
-    }
-    // No inventory in the project — synthesize a host from the playbook so
-    // play/role/-e vars still resolve and the table isn't empty.
-    return syntheticInventory(activePlaybook?.plays)
-  }, [invPath, projectModel, activePlaybook])
-
-  const hosts = useMemo(() => [...new Set(Object.values(inventoryData.groups).flat())].sort(), [inventoryData])
-  useEffect(() => { setHost((h) => (hosts.includes(h) ? h : (hosts[0] ?? ''))) }, [hosts])
-
   const varsFileCandidates = useMemo(
     () => Object.keys(projectModel.files).filter((p) => /\.(ya?ml|json)$/i.test(p)).sort(),
     [projectModel],
   )
-
-  const extraVarsLayers = useMemo(() => {
-    const layers = picked.map((p) => ({ label: `@${p}`, path: p, vars: parseFile(projectModel.files[p] ?? '', p) }))
-    const kv = {}
-    for (const { key, value } of pairs) if (key) kv[key] = coerce(value)
-    if (Object.keys(kv).length) layers.push({ label: '-e key=value', path: '(cli)', vars: kv })
-    return layers
-  }, [picked, pairs, projectModel])
 
   const runtimeVars = useMemo(() => (activePlaybook ? extractRuntimeVars(activePlaybook, projectModel) : []), [activePlaybook, projectModel])
 
@@ -272,14 +216,14 @@ export default function ResolveView({ mainPlaybook = '', mainPath = 'playbook.ym
         <div className="flex flex-wrap items-center gap-2">
           <div data-tour="resolver-pickers" className="flex flex-wrap items-center gap-2">
             {invCandidates.length > 0 ? (
-              <Select icon={Server} value={invPath} onChange={setInvPath}
+              <Select icon={Server} value={invPath} onChange={onInvPathChange}
                 options={invCandidates} getValue={(o) => o.path} getLabel={(o) => o.path} />
             ) : (
               <span className="flex items-center gap-1.5 rounded border border-slate-800 bg-slate-900 px-2 py-1 text-[11px] font-mono text-slate-500">
                 <Server size={12} /> synthetic inventory
               </span>
             )}
-            <Select icon={Server} value={host} onChange={setHost} options={hosts}
+            <Select icon={Server} value={host} onChange={onHostChange} options={hosts}
               placeholder={hosts.length ? undefined : 'no hosts'} />
           </div>
           <div className="flex-1" />

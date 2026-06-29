@@ -122,11 +122,17 @@ function getVisualNodeWidth(node) {
  * xOffset: horizontal shift from X_BASE (used for nested indentation).
  */
 function processTaskList(tasks, nodes, edges, prevId, globalY, ctx, depth = 0) {
-  const { facts, fileRegistry, xOffset = 0 } = ctx
+  const { facts, fileRegistry, xOffset = 0, stageRef, stage: inheritedStage } = ctx
   const X = X_BASE + xOffset
 
   tasks.forEach((rawTask) => {
     const task = normaliseFqcn(rawTask)
+    // One stage per top-level item (pre_tasks/tasks/post_tasks); anything
+    // nested inside an include/role/block (depth > 0) inherits its
+    // container's single stage instead of incrementing further — see
+    // parseYamlToFlow.js's module comment on incremental var resolution.
+    const myStage = depth === 0 ? stageRef.value++ : inheritedStage
+
     // ── include_tasks / import_tasks ──────────────────────────────
     const includeKey = task.include_tasks !== undefined ? 'include_tasks'
       : task.import_tasks !== undefined ? 'import_tasks' : null
@@ -152,7 +158,7 @@ function processTaskList(tasks, nodes, edges, prevId, globalY, ctx, depth = 0) {
         const tempNodes = []
         const tempEdges = []
         const res = processTaskList(
-          resolvedTasks, tempNodes, tempEdges, incId, childStartY, { ...ctx, xOffset: childXOffset }, depth + 1
+          resolvedTasks, tempNodes, tempEdges, incId, childStartY, { ...ctx, xOffset: childXOffset, stage: myStage }, depth + 1
         )
         const childEndY = res.globalY
 
@@ -172,7 +178,7 @@ function processTaskList(tasks, nodes, edges, prevId, globalY, ctx, depth = 0) {
           type: 'includeNode',
           position: { x: bgX, y: headerY },
           style: { width: bgWidth },
-          data: { label: filename, taskCount: resolvedTasks.length },
+          data: { label: filename, taskCount: resolvedTasks.length, stage: myStage },
         })
         edges.push({ id: `e${prevId}-${incId}`, source: prevId, target: incId })
 
@@ -206,7 +212,7 @@ function processTaskList(tasks, nodes, edges, prevId, globalY, ctx, depth = 0) {
           id: missId,
           type: 'missingFileNode',
           position: { x: X, y: globalY },
-          data: { label: filename || '(unknown)' },
+          data: { label: filename || '(unknown)', kind: includeKey, taskName: task.name || null, stage: myStage },
         })
         edges.push({ id: `e${prevId}-${missId}`, source: prevId, target: missId })
         globalY += TASK_HEIGHT + ROW_GAP
@@ -236,7 +242,7 @@ function processTaskList(tasks, nodes, edges, prevId, globalY, ctx, depth = 0) {
         id: diamondId,
         type: 'conditionalNode',
         position: { x: X, y: globalY },
-        data: { label: `when: ${whenVal}`, condResult },
+        data: { label: `when: ${whenVal}`, condResult, stage: myStage },
         style: { opacity: DIM },
       })
       edges.push({ id: `e${prevId}-${diamondId}`, source: prevId, target: diamondId, type: 'default' })
@@ -249,7 +255,7 @@ function processTaskList(tasks, nodes, edges, prevId, globalY, ctx, depth = 0) {
         id: trueId,
         type: hasLoop ? 'loopNode' : 'taskNode',
         position: { x: X + COL_GAP, y: globalY },
-        data: { label: getTaskLabel(task), module, task, dimmed: !condResult },
+        data: { label: getTaskLabel(task), module, task, dimmed: !condResult, stage: myStage },
         style: { opacity: condResult ? 1 : 0.35 },
       })
       edges.push({
@@ -269,7 +275,7 @@ function processTaskList(tasks, nodes, edges, prevId, globalY, ctx, depth = 0) {
         id: skipId,
         type: 'skipNode',
         position: { x: X - COL_GAP, y: globalY },
-        data: { label: 'Skip', active: !condResult },
+        data: { label: 'Skip', active: !condResult, stage: myStage },
         style: { opacity: condResult ? 0.35 : 1 },
       })
       edges.push({
@@ -307,7 +313,7 @@ function processTaskList(tasks, nodes, edges, prevId, globalY, ctx, depth = 0) {
         id: tId,
         type: hasLoop ? 'loopNode' : 'taskNode',
         position: { x: X, y: globalY },
-        data: { label: getTaskLabel(task), module, task },
+        data: { label: getTaskLabel(task), module, task, stage: myStage },
       })
       edges.push({ id: `e${prevId}-${tId}`, source: prevId, target: tId })
       globalY += TASK_HEIGHT + ROW_GAP
@@ -362,7 +368,10 @@ export function parsePlaybook(plays, rawYaml, facts = {}, fileRegistry = {}) {
   const nodes = []
   const edges = []
   const lineMap = new Map()
-  const ctx = { facts, fileRegistry }
+  // One incrementing counter for the whole playbook — see the module comment
+  // above processTaskList on incremental var-resolution staging.
+  const stageRef = { value: 0 }
+  const ctx = { facts, fileRegistry, stageRef }
 
   if (!Array.isArray(plays)) return { nodes, edges, lineMap }
 
@@ -389,6 +398,7 @@ export function parsePlaybook(plays, rawYaml, facts = {}, fileRegistry = {}) {
         : (roleEntry?.role ?? roleEntry?.name ?? String(roleEntry))
       const roleFile = `roles/${roleName}/tasks/main.yml`
       const roleTasks = fileRegistry[roleFile]
+      const myStage = stageRef.value++
 
       if (roleTasks) {
         globalY += ROW_GAP  // extra spacing before role group
@@ -402,7 +412,7 @@ export function parsePlaybook(plays, rawYaml, facts = {}, fileRegistry = {}) {
         // Collect children into temp buffers first (so we can size the background)
         const tempNodes = []
         const tempEdges = []
-        const res = processTaskList(roleTasks, tempNodes, tempEdges, roleId, childStartY, { ...ctx, xOffset: childXOffset }, 1)
+        const res = processTaskList(roleTasks, tempNodes, tempEdges, roleId, childStartY, { ...ctx, xOffset: childXOffset, stage: myStage }, 1)
         const childEndY = res.globalY
 
         const childMinX = tempNodes.length > 0
@@ -420,7 +430,7 @@ export function parsePlaybook(plays, rawYaml, facts = {}, fileRegistry = {}) {
           type: 'includeNode',
           position: { x: bgX, y: headerY },
           style: { width: bgWidth },
-          data: { label: `role: ${roleName}`, taskCount: roleTasks.length },
+          data: { label: `role: ${roleName}`, taskCount: roleTasks.length, stage: myStage },
         })
         edges.push({ id: `e${prevId}-${roleId}`, source: prevId, target: roleId })
 
@@ -450,7 +460,7 @@ export function parsePlaybook(plays, rawYaml, facts = {}, fileRegistry = {}) {
           id: missId,
           type: 'missingFileNode',
           position: { x: X_BASE, y: globalY },
-          data: { label: `role: ${roleName}` },
+          data: { label: `role: ${roleName}`, kind: 'role', roleName, playLabel, stage: myStage },
         })
         edges.push({ id: `e${prevId}-${missId}`, source: prevId, target: missId })
         globalY += TASK_HEIGHT + ROW_GAP

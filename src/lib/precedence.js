@@ -87,24 +87,33 @@ function resolveVarsFile(files, baseDir, ref) {
  * Walk a task list, emitting var declarations for block/task vars, include_vars,
  * set_fact, register, dynamically-included role defaults/vars, and include/role
  * params. `emit` receives:
- *   { name, level, label, path, value?, hasValue, kind?, note? }
+ *   { name, level, label, path, value?, hasValue, kind?, note?, stage }
  * `pm` (projectModel) is used to resolve include_role/import_role defaults+vars.
+ *
+ * `stageState` (optional) — { stageRef: {value}, stage } — mirrors
+ * parseYamlToFlow.js's processTaskList: one stage per top-level task (depth
+ * 0), everything nested (blocks/includes, depth > 0) inherits its
+ * container's single stage. Pass undefined/null for unstaged scans (e.g.
+ * handlers), which emit with `stage: null` (always visible regardless of
+ * `stopAtStage` — see resolveHostVars).
  */
-function scanTasks(tasks, emit, path, files, pm) {
+function scanTasks(tasks, emit, path, files, pm, stageState = null, depth = 0) {
   if (!Array.isArray(tasks)) return
   for (const t of tasks) {
     if (!t || typeof t !== 'object') continue
     const get = (k) => t[k] ?? t[`ansible.builtin.${k}`]
+    const myStage = !stageState ? null : (depth === 0 ? stageState.stageRef.value++ : stageState.stage)
+    const childStageState = stageState ? { stageRef: stageState.stageRef, stage: myStage } : null
 
     if (Array.isArray(t.block)) {
       if (t.vars && typeof t.vars === 'object') {
         for (const [k, v] of Object.entries(t.vars)) {
-          emit({ name: k, level: 16, label: `block vars${t.name ? `: ${t.name}` : ''}`, path, value: v, hasValue: true })
+          emit({ name: k, level: 16, label: `block vars${t.name ? `: ${t.name}` : ''}`, path, value: v, hasValue: true, stage: myStage })
         }
       }
-      scanTasks(t.block, emit, path, files, pm)
-      scanTasks(t.rescue, emit, path, files, pm)
-      scanTasks(t.always, emit, path, files, pm)
+      scanTasks(t.block, emit, path, files, pm, childStageState, depth + 1)
+      scanTasks(t.rescue, emit, path, files, pm, childStageState, depth + 1)
+      scanTasks(t.always, emit, path, files, pm, childStageState, depth + 1)
       continue
     }
 
@@ -115,30 +124,30 @@ function scanTasks(tasks, emit, path, files, pm) {
       const rname = typeof incRole === 'string' ? incRole : (incRole?.name)
       const role = rname && pm ? lookupRole(rname, pm) : null
       if (role) {
-        for (const [k, v] of Object.entries(role.defaults || {})) emit({ name: k, level: 2, label: `role defaults: ${rname}`, path: `${role.base}/defaults/main.yml`, value: v, hasValue: true })
-        for (const [k, v] of Object.entries(role.vars || {})) emit({ name: k, level: 15, label: `role vars: ${rname}`, path: `${role.base}/vars/main.yml`, value: v, hasValue: true })
+        for (const [k, v] of Object.entries(role.defaults || {})) emit({ name: k, level: 2, label: `role defaults: ${rname}`, path: `${role.base}/defaults/main.yml`, value: v, hasValue: true, stage: myStage })
+        for (const [k, v] of Object.entries(role.vars || {})) emit({ name: k, level: 15, label: `role vars: ${rname}`, path: `${role.base}/vars/main.yml`, value: v, hasValue: true, stage: myStage })
       }
       if (t.vars && typeof t.vars === 'object') {
-        for (const [k, v] of Object.entries(t.vars)) emit({ name: k, level: 20, label: `include_role params${rname ? `: ${rname}` : ''}`, path, value: v, hasValue: true })
+        for (const [k, v] of Object.entries(t.vars)) emit({ name: k, level: 20, label: `include_role params${rname ? `: ${rname}` : ''}`, path, value: v, hasValue: true, stage: myStage })
       }
     } else if (incTasks) {
       if (t.vars && typeof t.vars === 'object') {
-        for (const [k, v] of Object.entries(t.vars)) emit({ name: k, level: 21, label: 'include params', path, value: v, hasValue: true })
+        for (const [k, v] of Object.entries(t.vars)) emit({ name: k, level: 21, label: 'include params', path, value: v, hasValue: true, stage: myStage })
       }
     } else if (t.vars && typeof t.vars === 'object') {
-      for (const [k, v] of Object.entries(t.vars)) emit({ name: k, level: 17, label: `task vars${t.name ? `: ${t.name}` : ''}`, path, value: v, hasValue: true })
+      for (const [k, v] of Object.entries(t.vars)) emit({ name: k, level: 17, label: `task vars${t.name ? `: ${t.name}` : ''}`, path, value: v, hasValue: true, stage: myStage })
     }
 
     const sf = get('set_fact')
     if (sf && typeof sf === 'object') {
       for (const k of Object.keys(sf)) {
         if (k === 'cacheable') continue
-        emit({ name: k, level: 19, label: `set_fact${t.name ? `: ${t.name}` : ''}`, path, kind: 'set_fact', hasValue: false })
+        emit({ name: k, level: 19, label: `set_fact${t.name ? `: ${t.name}` : ''}`, path, kind: 'set_fact', hasValue: false, stage: myStage })
       }
     }
 
     if (typeof t.register === 'string') {
-      emit({ name: t.register, level: 19, label: `register${t.name ? `: ${t.name}` : ''}`, path, kind: 'register', hasValue: false })
+      emit({ name: t.register, level: 19, label: `register${t.name ? `: ${t.name}` : ''}`, path, kind: 'register', hasValue: false, stage: myStage })
     }
 
     const iv = get('include_vars')
@@ -147,7 +156,7 @@ function scanTasks(tasks, emit, path, files, pm) {
       const resolved = file ? resolveVarsFile(files, '', file) : null
       if (resolved) {
         for (const [k, v] of Object.entries(resolved.vars)) {
-          emit({ name: k, level: 18, label: `include_vars: ${file}`, path: resolved.path, value: v, hasValue: true })
+          emit({ name: k, level: 18, label: `include_vars: ${file}`, path: resolved.path, value: v, hasValue: true, stage: myStage })
         }
       }
     }
@@ -174,6 +183,24 @@ function playFlatRoles(play, pm) {
   const seen = new Set()
   for (const r of (Array.isArray(play.roles) ? play.roles : [])) flattenRole(r, pm, seen, out)
   return out
+}
+
+/**
+ * Like playFlatRoles, but grouped by top-level `play.roles` entry with a
+ * stage number per entry — Flow only ever shows one node per play.roles
+ * entry (meta `dependencies:` aren't rendered separately), so a dependency
+ * role's vars share its pulling entry's stage rather than getting their own.
+ * `stageRef` is shared/advanced across the whole playbook (see
+ * parseYamlToFlow.js's identically-ordered counter).
+ */
+function playRoleStages(play, pm, stageRef) {
+  const entries = Array.isArray(play.roles) ? play.roles : []
+  return entries.map((entry) => {
+    const stage = stageRef.value++
+    const items = []
+    flattenRole(entry, pm, new Set(), items)
+    return { stage, items }
+  })
 }
 
 /** Read a role's tasks/main.{yml,yaml} as a task list (or []). */
@@ -244,7 +271,11 @@ export function collectReferencedVars(projectModel, activePlaybook) {
  * opts: {
  *   projectModel, inventoryData:{groups,groupvars,hostvars}, inventoryPath,
  *   activePlaybook:{path,plays}, facts, runtimeMocks:{name:value},
- *   extraVarsLayers:[{label,path,vars}]   // applied in order, all win
+ *   extraVarsLayers:[{label,path,vars}],  // applied in order, all win
+ *   stopAtStage:number   // optional — only include role/task-derived vars up
+ *                        // to this stage (see selectedNode.data.stage in
+ *                        // parseYamlToFlow.js). Omit for full resolution
+ *                        // (today's behavior, used by the Resolve tab).
  * }
  * Returns { host, hostGroups, plays, vars:{ name:{ winner, stack:[{value,level,source}] } } }
  */
@@ -252,6 +283,7 @@ export function resolveHostVars(host, opts = {}) {
   const {
     projectModel, inventoryData = {}, inventoryPath = '(inventory)',
     activePlaybook, facts = {}, runtimeMocks = {}, extraVarsLayers = [],
+    stopAtStage = null,
   } = opts
 
   const groups = inventoryData.groups ?? {}
@@ -264,7 +296,12 @@ export function resolveHostVars(host, opts = {}) {
     .map(([g]) => g)
     .sort()
 
-  const plays = (activePlaybook?.plays ?? []).filter((p) => playTargetsHost(p, host, groups))
+  // allPlays (unfiltered, document order) drives the stage counter so it
+  // stays aligned with parseYamlToFlow.js's identical global counter, which
+  // has no notion of host filtering. `plays` (host-matching only) is what
+  // actually gets resolved/returned.
+  const allPlays = activePlaybook?.plays ?? []
+  const plays = allPlays.filter((p) => playTargetsHost(p, host, groups))
   const pbDir = activePlaybook?.path ? dirname(activePlaybook.path) : ''
   const invDir = inventoryPath ? dirname(inventoryPath) : ''
 
@@ -277,21 +314,15 @@ export function resolveHostVars(host, opts = {}) {
 
   const entries = []
   let order = 0
-  const push = (name, value, level, source) => entries.push({ name, value, level, order: order++, source })
-  const pushObj = (obj, level, source) => {
-    if (!obj || typeof obj !== 'object') return
-    for (const [k, v] of Object.entries(obj)) push(k, v, level, source)
+  const passesStage = (stage) => stage == null || stopAtStage == null || stage <= stopAtStage
+  const push = (name, value, level, source, stage = null) => {
+    if (!passesStage(stage)) return
+    entries.push({ name, value, level, order: order++, source })
   }
-
-  // Flattened roles per play (meta dependencies first, then the role).
-  const flatRolesByPlay = plays.map((play) => playFlatRoles(play, projectModel))
-
-  // L2 role defaults (incl. dependency roles)
-  flatRolesByPlay.forEach((flat) => {
-    for (const { name: nm, role } of flat) {
-      if (role) pushObj(role.defaults, 2, { label: `role defaults: ${nm}`, path: `${role.base}/defaults/main.yml` })
-    }
-  })
+  const pushObj = (obj, level, source, stage = null) => {
+    if (!obj || typeof obj !== 'object' || !passesStage(stage)) return
+    for (const [k, v] of Object.entries(obj)) push(k, v, level, source, stage)
+  }
 
   // L3 inventory-file group vars (all → specific)
   for (const g of ['all', ...hostGroups]) pushObj(groupvars[g], 3, { label: `inventory [${g}:vars]`, path: inventoryPath })
@@ -321,52 +352,89 @@ export function resolveHostVars(host, opts = {}) {
   // L11 host facts / cached set_fact
   pushObj(facts, 11, { label: 'host facts', path: '(facts)' })
 
-  // L12 play vars, L13 vars_prompt, L14 vars_files
-  for (const play of plays) {
-    pushObj(play.vars, 12, { label: 'play vars', path: activePlaybook.path })
-    const vp = play.vars_prompt
-    if (Array.isArray(vp)) {
-      for (const item of vp) {
-        if (!item?.name) continue
-        const value = (item.name in runtimeMocks) ? runtimeMocks[item.name] : item.default
-        push(item.name, value, 13, { label: 'vars_prompt', path: activePlaybook.path, runtime: item.default === undefined })
-      }
-    }
-    const vf = play.vars_files
-    const list = Array.isArray(vf) ? vf : (vf ? [vf] : [])
-    for (const f of list) {
-      // A list item may itself be a list = "first file that exists" wins.
-      const choices = Array.isArray(f) ? f : [f]
-      for (const choice of choices) {
-        const resolved = resolveVarsFile(files, pbDir, choice)
-        if (resolved) { pushObj(resolved.vars, 14, { label: `vars_files: ${choice}`, path: resolved.path }); break }
-      }
-    }
-  }
-
-  // L15 role vars + L20 role params (incl. dependency roles)
-  flatRolesByPlay.forEach((flat) => {
-    for (const { name: nm, role, params } of flat) {
-      if (role) pushObj(role.vars, 15, { label: `role vars: ${nm}`, path: `${role.base}/vars/main.yml` })
-      if (params && Object.keys(params).length) pushObj(params, 20, { label: `role params: ${nm}`, path: activePlaybook.path })
-    }
-  })
-
-  // L16/17/18/19/20/21 — task-derived (playbook tasks + used role tasks)
-  const taskEmit = (d) => {
-    const value = d.hasValue ? d.value : (d.name in runtimeMocks ? runtimeMocks[d.name] : undefined)
-    push(d.name, value, d.level, { label: d.label, path: d.path, runtime: !d.hasValue, note: d.note })
-  }
-  plays.forEach((play, pi) => {
-    for (const section of ['pre_tasks', 'tasks', 'post_tasks', 'handlers']) scanTasks(play[section], taskEmit, activePlaybook.path, files, projectModel)
-    for (const { role } of flatRolesByPlay[pi]) {
-      const { tasks, path } = roleTaskList(role, files)
-      scanTasks(tasks, taskEmit, path, files, projectModel)
-    }
-  })
-
   // L22 extra vars (applied in order; later wins; all beat every other level)
   extraVarsLayers.forEach((layer, i) => pushObj(layer?.vars, 22, { label: layer?.label || `-e (${i + 1})`, path: layer?.path }))
+
+  // ── per-play, stage-ordered: roles → pre_tasks → tasks → post_tasks ──────
+  // Mirrors parseYamlToFlow.js's rendering order exactly so stage numbers
+  // line up with selectedNode.data.stage. The counter advances for every
+  // play in document order regardless of host match (matching Flow, which
+  // has no host filter); only matching plays actually push declarations.
+  const stageRef = { value: 0 }
+  const makeTaskEmit = (targets) => (d) => {
+    if (!targets) return
+    const value = d.hasValue ? d.value : (d.name in runtimeMocks ? runtimeMocks[d.name] : undefined)
+    push(d.name, value, d.level, { label: d.label, path: d.path, runtime: !d.hasValue, note: d.note }, d.stage)
+  }
+
+  // Play/role/task-level vars are static playbook content, not per-host
+  // inventory data — if not a single play in the playbook actually targets
+  // this host (e.g. the loaded inventory has no group matching any play's
+  // `hosts:` pattern), showing nothing is more confusing than useful. Fall
+  // back to treating every play as applicable in that case. But if at least
+  // one play DOES target this host, keep strict per-play matching — a
+  // multi-play playbook's unrelated plays shouldn't bleed vars into a host
+  // they don't apply to. `plays` (returned to the caller) stays accurate
+  // either way, for UI that needs to know the real match status.
+  const anyPlayTargetsHost = plays.length > 0
+  allPlays.forEach((play) => {
+    const targets = anyPlayTargetsHost ? playTargetsHost(play, host, groups) : true
+    const emit = makeTaskEmit(targets)
+
+    // L2 role defaults + L15 role vars + L20 role params (incl. dependency
+    // roles, attributed to the pulling entry's stage — Flow never renders
+    // meta dependencies as separate nodes).
+    const roleStages = playRoleStages(play, projectModel, stageRef)
+    roleStages.forEach(({ stage, items }) => {
+      if (!targets) return
+      for (const { name: nm, role, params } of items) {
+        if (role) {
+          pushObj(role.defaults, 2, { label: `role defaults: ${nm}`, path: `${role.base}/defaults/main.yml` }, stage)
+          pushObj(role.vars, 15, { label: `role vars: ${nm}`, path: `${role.base}/vars/main.yml` }, stage)
+        }
+        if (params && Object.keys(params).length) pushObj(params, 20, { label: `role params: ${nm}`, path: activePlaybook?.path }, stage)
+      }
+    })
+    roleStages.forEach(({ stage, items }) => {
+      for (const { role } of items) {
+        const { tasks, path } = roleTaskList(role, files)
+        scanTasks(tasks, emit, path, files, projectModel, { stageRef, stage }, 1)
+      }
+    })
+
+    if (targets) {
+      // L12 play vars, L13 vars_prompt, L14 vars_files — resolved before any
+      // task runs, so always available regardless of stage.
+      pushObj(play.vars, 12, { label: 'play vars', path: activePlaybook?.path })
+      const vp = play.vars_prompt
+      if (Array.isArray(vp)) {
+        for (const item of vp) {
+          if (!item?.name) continue
+          const value = (item.name in runtimeMocks) ? runtimeMocks[item.name] : item.default
+          push(item.name, value, 13, { label: 'vars_prompt', path: activePlaybook?.path, runtime: item.default === undefined })
+        }
+      }
+      const vf = play.vars_files
+      const list = Array.isArray(vf) ? vf : (vf ? [vf] : [])
+      for (const f of list) {
+        // A list item may itself be a list = "first file that exists" wins.
+        const choices = Array.isArray(f) ? f : [f]
+        for (const choice of choices) {
+          const resolved = resolveVarsFile(files, pbDir, choice)
+          if (resolved) { pushObj(resolved.vars, 14, { label: `vars_files: ${choice}`, path: resolved.path }); break }
+        }
+      }
+    }
+
+    // L16-21 task-derived — pre_tasks, then tasks, then post_tasks (one
+    // stage per top-level entry, advancing the same counter as above).
+    for (const section of ['pre_tasks', 'tasks', 'post_tasks']) {
+      scanTasks(play[section], emit, activePlaybook?.path, files, projectModel, { stageRef })
+    }
+    // Handlers are notify-triggered side paths, not part of the main
+    // sequence — always fully included, never stage-gated.
+    scanTasks(play.handlers, emit, activePlaybook?.path, files, projectModel, null)
+  })
 
   // ── assemble stacks ──
   const byName = new Map()
