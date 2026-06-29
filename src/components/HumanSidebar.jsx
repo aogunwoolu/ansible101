@@ -68,8 +68,15 @@ function resolveLoopItems(loopRaw, resolution) {
   return null
 }
 
-function formatLoopPreview(items, max = 4) {
-  const shown = items.slice(0, max).map((v) => formatVarValue(v))
+// Used inline as "{{ item }} → <preview>" on a `whitespace-nowrap` span (so
+// the expression and its value never break apart awkwardly) — each value is
+// capped short so a loop over long strings/objects can't stretch that one
+// unbreakable span past the sidebar's width.
+function formatLoopPreview(items, max = 4, maxLen = 24) {
+  const shown = items.slice(0, max).map((v) => {
+    const s = formatVarValue(v)
+    return s.length > maxLen ? `${s.slice(0, maxLen - 1)}…` : s
+  })
   const more = items.length > max ? `, … (${items.length} total)` : ` (${items.length} total)`
   return shown.join(', ') + more
 }
@@ -116,7 +123,10 @@ function annotateTemplates(text, resolution, fullResolution, loopInfo) {
     const atStage = !isLoopVarRef ? tryRenderExpr(expr, resolution) : null
     const atFull = !isLoopVarRef && atStage === null ? tryRenderExpr(expr, fullResolution) : null
     nodes.push(
-      <span key={m.index} className="whitespace-nowrap">
+      // Loop previews can run long (multiple items joined together) — let
+      // that one wrap normally instead of forcing it onto one unbroken line
+      // like the (always short) resolved-variable case below.
+      <span key={m.index} className={isLoopVarRef ? 'break-words' : 'whitespace-nowrap'}>
         <span className="text-slate-400">{expr}</span>
         {isLoopVarRef ? (
           <span className="text-violet-300"> → {loopInfo.preview}</span>
@@ -261,24 +271,31 @@ function ExplanationCard({
       {/* Loops — show the actual items being iterated, not just a count,
           and name the loop var when it's not the `item` default. */}
       {hasLoop && (
-        <div className="mt-1 text-violet-400 text-xs font-mono">
-          <div className="flex items-center gap-1">
-            <RefreshCw size={11} />
-            <span>
+        <div className="mt-1 text-violet-400 text-xs font-mono min-w-0">
+          <div className="flex items-start gap-1 min-w-0">
+            <RefreshCw size={11} className="mt-0.5 shrink-0" />
+            <span className="min-w-0 break-words">
               {loopItems
                 ? `Loops over ${loopItems.length} item(s) as {{ ${loopVar} }}:`
                 : `Loops over a dynamically-resolved list as {{ ${loopVar} }} — can't preview items statically.`}
             </span>
           </div>
           {loopItems && (
-            <div className="mt-1 ml-4 flex flex-wrap gap-1">
-              {loopItems.slice(0, 12).map((v, i) => (
-                <span key={i} className="px-1.5 py-0.5 rounded bg-violet-950 border border-violet-800 text-violet-300 text-[10px]">
-                  {formatVarValue(v)}
-                </span>
-              ))}
+            <div className="mt-1 ml-4 flex flex-wrap gap-1 min-w-0">
+              {loopItems.slice(0, 12).map((v, i) => {
+                const label = formatVarValue(v)
+                return (
+                  <span
+                    key={i}
+                    title={label}
+                    className="inline-block max-w-[160px] truncate px-1.5 py-0.5 rounded bg-violet-950 border border-violet-800 text-violet-300 text-[10px]"
+                  >
+                    {label}
+                  </span>
+                )
+              })}
               {loopItems.length > 12 && (
-                <span className="px-1.5 py-0.5 text-violet-600 text-[10px]">+{loopItems.length - 12} more</span>
+                <span className="px-1.5 py-0.5 text-violet-600 text-[10px] shrink-0">+{loopItems.length - 12} more</span>
               )}
             </div>
           )}
