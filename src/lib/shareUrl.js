@@ -18,6 +18,7 @@
  */
 import { deflateSync, inflateSync, strFromU8, strToU8 } from 'fflate'
 import LZString from 'lz-string'
+import { idbGet, idbSet, idbDelete } from './idbStore'
 
 const V3_PREFIX = 'd:'
 const V2_PREFIX = 'z:'
@@ -194,15 +195,41 @@ const LS_PREFIX = 'ls'
 // tell the user instead. (Persistence isn't affected — that uses localStorage.)
 const MAX_HASH = 14000
 
+// Set when a project payload had to fall back to IndexedDB because it didn't
+// fit in localStorage — see persistState. Cleared once localStorage can hold
+// the state again (project shrunk, or files were removed).
+const IDB_FALLBACK_KEY = 'project-fallback'
+
 /**
  * Auto-save state to this browser's localStorage. Does NOT touch the URL, so
  * the address bar stays clean while editing. Restored by `loadFromUrl`.
+ *
+ * localStorage tops out around 5-10MB per origin — comfortably exceeded by a
+ * real multi-role Ansible repo zip (this app explicitly supports importing
+ * those, see useFileDrop.js). When the write is rejected (QuotaExceededError)
+ * the payload silently used to vanish, so a refresh dropped the whole
+ * session back to the sample playbook. Falls back to IndexedDB (much larger
+ * quota) instead — see loadFallbackFromIndexedDb / App.jsx's hydration effect.
  */
 export function persistState(yaml, facts, extraFiles = [], meta = {}) {
+  const payload = compactState(yaml, facts, extraFiles, meta)
   try {
-    const payload = JSON.stringify(compactState(yaml, facts, extraFiles, meta))
-    globalThis.localStorage.setItem(LS_PROJECT, payload)
-  } catch { /* storage blocked — state stays in memory only */ }
+    globalThis.localStorage.setItem(LS_PROJECT, JSON.stringify(payload))
+    idbDelete(IDB_FALLBACK_KEY)
+  } catch {
+    idbSet(IDB_FALLBACK_KEY, payload).catch(() => { /* best-effort only */ })
+  }
+}
+
+/**
+ * Check IndexedDB for a project payload that overflowed localStorage on a
+ * previous save. Returns the same shape as loadFromUrl()'s local restore, or
+ * null if nothing's there (the common case — localStorage handled it fine).
+ */
+export async function loadFallbackFromIndexedDb() {
+  const payload = await idbGet(IDB_FALLBACK_KEY)
+  if (!payload) return null
+  return expandState(payload)
 }
 
 /**

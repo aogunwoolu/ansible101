@@ -14,7 +14,7 @@ import React, {
 } from 'react'
 import yaml from 'js-yaml'
 import { parsePlaybook } from './lib/parseYamlToFlow'
-import { persistState, buildShareUrl, loadFromUrl } from './lib/shareUrl'
+import { persistState, buildShareUrl, loadFromUrl, loadFallbackFromIndexedDb } from './lib/shareUrl'
 import { toMermaidFlow, toPlantUmlFlow } from './lib/exportFlowText'
 import { SAMPLE_YAML, SAMPLE_SNIPPET } from './lib/sampleYaml'
 import { SAMPLE_JINJA2 } from './lib/sampleJinja2'
@@ -282,6 +282,30 @@ export default function App() {
     if (urlState.fromHash && contentMode === 'playbook') {
       globalThis.history.replaceState(null, '', globalThis.location.pathname)
     }
+  }, [urlState])
+
+  // A previous session's auto-save may have overflowed localStorage's quota
+  // (real Ansible repo zips routinely run multiple MB — see useFileDrop.js)
+  // and silently fallen back to IndexedDB instead — see persistState in
+  // shareUrl.js. Check for it once on mount and, if present, let it win over
+  // whatever the synchronous localStorage/sample fallback rendered first.
+  // A shared link (`urlState.fromHash`) is explicit user intent and always
+  // takes priority over a leftover local session.
+  useEffect(() => {
+    if (urlState?.fromHash) return
+    let cancelled = false
+    loadFallbackFromIndexedDb().then((fallback) => {
+      if (cancelled || !fallback) return
+      const hydratedMode = getModeFromLocation(fallback)
+      setMode(hydratedMode)
+      const contentMode = hydratedMode === 'landing' ? getContentModeFromState(fallback) : hydratedMode
+      setTexts((prev) => ({ ...prev, [contentMode]: fallback.yaml ?? '' }))
+      if (fallback.facts) setFacts(fallback.facts)
+      setExtraFiles(normaliseExtraFiles(fallback.extraFiles))
+      setMainPath(fallback.mainPath ?? 'playbook.yml')
+      setActiveFileId('main')
+    })
+    return () => { cancelled = true }
   }, [urlState])
 
   useEffect(() => {
